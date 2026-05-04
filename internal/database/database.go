@@ -50,7 +50,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*sqlx.DB, error) {
 	return db, nil
 }
 
-// Migrate runs the schema migrations located in the migrations directory.
+// Migrate runs the schema migrations and ensures data types are correct.
 func Migrate(db *sqlx.DB, logger *slog.Logger) error {
 	migrationPath := "migrations/000001_create_tables.up.sql"
 	schema, err := os.ReadFile(migrationPath)
@@ -58,11 +58,41 @@ func Migrate(db *sqlx.DB, logger *slog.Logger) error {
 		return fmt.Errorf("reading migration file %s: %w", migrationPath, err)
 	}
 
+	// 1. Run basic schema creation
 	_, err = db.Exec(string(schema))
 	if err != nil {
 		return fmt.Errorf("executing migration: %w", err)
 	}
 
-	logger.Info("database migrations applied successfully")
+	// 2. Schema Reconciliation: Fix columns that might have been created as NUMERIC in previous versions
+	// This ensures everyone has the optimized INT schema regardless of when they first ran the app.
+	reconcileQuery := `
+		DO $$ BEGIN
+			-- Fix cartons
+			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'cartons' AND column_name = 'length' AND data_type = 'numeric') THEN
+				ALTER TABLE cartons ALTER COLUMN length TYPE INT USING length::INT,
+				                  ALTER COLUMN width TYPE INT USING width::INT,
+				                  ALTER COLUMN height TYPE INT USING height::INT,
+				                  ALTER COLUMN max_weight TYPE INT USING max_weight::INT;
+			END IF;
+			-- Fix order_items
+			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'order_items' AND column_name = 'length' AND data_type = 'numeric') THEN
+				ALTER TABLE order_items ALTER COLUMN length TYPE INT USING length::INT,
+				                      ALTER COLUMN width TYPE INT USING width::INT,
+				                      ALTER COLUMN height TYPE INT USING height::INT,
+				                      ALTER COLUMN weight TYPE INT USING weight::INT;
+			END IF;
+			-- Remove legacy column if exists
+			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'order_items' AND column_name = 'sku_name') THEN
+				ALTER TABLE order_items DROP COLUMN sku_name;
+			END IF;
+		END $$;`
+
+	_, err = db.Exec(reconcileQuery)
+	if err != nil {
+		logger.Warn("schema reconciliation failed (non-critical)", slog.Any("error", err))
+	}
+
+	logger.Info("database migrations and reconciliation applied successfully")
 	return nil
 }
