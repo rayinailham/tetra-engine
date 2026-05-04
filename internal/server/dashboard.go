@@ -260,8 +260,10 @@ func (s *Server) handleDashboardOrderDetail(w http.ResponseWriter, r *http.Reque
 
 	var items []OrderItemRow
 	err = s.db.SelectContext(ctx, &items, `
-		SELECT id, order_id, sku, sku_name, qty, length, width, height, weight
-		FROM order_items WHERE order_id = $1 ORDER BY id`, orderID)
+		SELECT oi.id, oi.order_id, oi.sku, p.name AS sku_name, oi.qty, oi.length, oi.width, oi.height, oi.weight
+		FROM order_items oi
+		LEFT JOIN products p ON oi.sku = p.sku
+		WHERE oi.order_id = $1 ORDER BY oi.id`, orderID)
 	if err != nil {
 		s.logger.Error("order items query failed", slog.Any("error", err))
 		items = []OrderItemRow{}
