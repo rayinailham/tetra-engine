@@ -34,6 +34,7 @@ type Order struct {
 	SyncedAt      *time.Time `db:"synced_at"`
 	RecommendedAt *time.Time `db:"recommended_at"`
 	PushedAt      *time.Time `db:"pushed_at"`
+	Reason        *string    `db:"reason"`
 	CreatedAt     time.Time  `db:"created_at"`
 	UpdatedAt     time.Time  `db:"updated_at"`
 }
@@ -129,9 +130,9 @@ type FluxCarton struct {
 
 // FluxAssignCartonRequest is the payload for POST /orders/carton.
 type FluxAssignCartonRequest struct {
-	OrderID   int    `json:"order_id"`
-	CartonID  string `json:"carton_id"`
-	CreatedBy string `json:"created_by"`
+	OrderID   int     `json:"order_id"`
+	CartonID  *string `json:"carton_id"`
+	CreatedBy string  `json:"created_by"`
 }
 
 // FluxAssignCartonResponse is the response from POST /orders/carton.

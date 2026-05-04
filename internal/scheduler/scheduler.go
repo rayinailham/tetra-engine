@@ -24,10 +24,6 @@ type Scheduler struct {
 	wg     sync.WaitGroup
 	mu     sync.Mutex
 	isRunning bool
-
-	// SSE support
-	subscribers []chan struct{}
-	subMu       sync.Mutex
 }
 
 // NewScheduler creates a new Scheduler and registers lifecycle hooks.
@@ -57,7 +53,7 @@ func NewScheduler(
 	return s
 }
 
-// Start launches all scheduler goroutines.
+// Start launches all scheduler goroutines after an initial sequential execution.
 func (s *Scheduler) Start() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -78,33 +74,63 @@ func (s *Scheduler) Start() {
 		slog.Duration("push", s.cfg.Scheduler.PushInterval),
 	)
 
-	// Job 1: Order Retrieval Sync
-	s.startJob(ctx, "order_retrieval", s.cfg.Scheduler.OrderSyncInterval, func(ctx context.Context) {
-		if err := s.svc.SyncOrders(ctx); err != nil {
-			s.logger.Error("order sync failed", slog.Any("error", err))
-		}
-	})
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		
+		s.logger.Info("starting initial sequential execution")
 
-	// Job 2: Carton Master Sync
-	s.startJob(ctx, "carton_sync", s.cfg.Scheduler.CartonSyncInterval, func(ctx context.Context) {
+		// 1. Carton Sync
+		s.logger.Info("running initial job execution", slog.String("job", "carton_sync"))
 		if err := s.svc.SyncCartons(ctx); err != nil {
 			s.logger.Error("carton sync failed", slog.Any("error", err))
 		}
-	})
 
-	// Job 3: Carton Recommendation
-	s.startJob(ctx, "carton_recommendation", s.cfg.Scheduler.RecommendationInterval, func(ctx context.Context) {
+		// 2. Order Retrieval
+		s.logger.Info("running initial job execution", slog.String("job", "order_retrieval"))
+		if err := s.svc.SyncOrders(ctx); err != nil {
+			s.logger.Error("order sync failed", slog.Any("error", err))
+		}
+
+		// 3. Recommendation
+		s.logger.Info("running initial job execution", slog.String("job", "carton_recommendation"))
 		if err := s.svc.ProcessRecommendations(ctx); err != nil {
 			s.logger.Error("recommendation processing failed", slog.Any("error", err))
 		}
-	})
 
-	// Job 4: Carton Push
-	s.startJob(ctx, "carton_push", s.cfg.Scheduler.PushInterval, func(ctx context.Context) {
+		// 4. Push
+		s.logger.Info("running initial job execution", slog.String("job", "carton_push"))
 		if err := s.svc.PushRecommendations(ctx); err != nil {
 			s.logger.Error("carton push failed", slog.Any("error", err))
 		}
-	})
+
+		s.logger.Info("initial sequential execution complete, starting periodic jobs")
+
+		// Now start the periodic tickers
+		s.startJob(ctx, "carton_sync", s.cfg.Scheduler.CartonSyncInterval, func(ctx context.Context) {
+			if err := s.svc.SyncCartons(ctx); err != nil {
+				s.logger.Error("carton sync failed", slog.Any("error", err))
+			}
+		})
+
+		s.startJob(ctx, "order_retrieval", s.cfg.Scheduler.OrderSyncInterval, func(ctx context.Context) {
+			if err := s.svc.SyncOrders(ctx); err != nil {
+				s.logger.Error("order sync failed", slog.Any("error", err))
+			}
+		})
+
+		s.startJob(ctx, "carton_recommendation", s.cfg.Scheduler.RecommendationInterval, func(ctx context.Context) {
+			if err := s.svc.ProcessRecommendations(ctx); err != nil {
+				s.logger.Error("recommendation processing failed", slog.Any("error", err))
+			}
+		})
+
+		s.startJob(ctx, "carton_push", s.cfg.Scheduler.PushInterval, func(ctx context.Context) {
+			if err := s.svc.PushRecommendations(ctx); err != nil {
+				s.logger.Error("carton push failed", slog.Any("error", err))
+			}
+		})
+	}()
 }
 
 // Stop gracefully shuts down all scheduler goroutines.
@@ -132,43 +158,6 @@ func (s *Scheduler) Status() bool {
 	return s.isRunning
 }
 
-// Subscribe returns a channel that is signaled whenever a job finishes.
-func (s *Scheduler) Subscribe() (chan struct{}, func()) {
-	s.subMu.Lock()
-	defer s.subMu.Unlock()
-
-	ch := make(chan struct{}, 1)
-	s.subscribers = append(s.subscribers, ch)
-
-	cleanup := func() {
-		s.subMu.Lock()
-		defer s.subMu.Unlock()
-		for i, sub := range s.subscribers {
-			if sub == ch {
-				s.subscribers = append(s.subscribers[:i], s.subscribers[i+1:]...)
-				close(ch)
-				break
-			}
-		}
-	}
-
-	return ch, cleanup
-}
-
-// Notify signals all subscribers that a job has finished.
-func (s *Scheduler) Notify() {
-	s.subMu.Lock()
-	defer s.subMu.Unlock()
-
-	for _, ch := range s.subscribers {
-		select {
-		case ch <- struct{}{}:
-		default:
-			// Buffer full, skip
-		}
-	}
-}
-
 // startJob launches a periodic job in a goroutine with panic recovery.
 func (s *Scheduler) startJob(ctx context.Context, name string, interval time.Duration, fn func(ctx context.Context)) {
 	s.wg.Add(1)
@@ -183,11 +172,6 @@ func (s *Scheduler) startJob(ctx context.Context, name string, interval time.Dur
 			}
 		}()
 
-		// Run immediately on start
-		s.logger.Info("running initial job execution", slog.String("job", name))
-		fn(ctx)
-		s.Notify()
-
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
@@ -199,7 +183,6 @@ func (s *Scheduler) startJob(ctx context.Context, name string, interval time.Dur
 			case <-ticker.C:
 				s.logger.Info("running scheduled job", slog.String("job", name))
 				fn(ctx)
-				s.Notify()
 			}
 		}
 	}()
@@ -224,7 +207,6 @@ func (s *Scheduler) TriggerJob(ctx context.Context, jobName string) error {
 		return nil
 	}
 
-	s.Notify()
 	return err
 }
 

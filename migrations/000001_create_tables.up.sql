@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS orders (
     synced_at       TIMESTAMPTZ,
     recommended_at  TIMESTAMPTZ,
     pushed_at       TIMESTAMPTZ,
+    reason          TEXT,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );

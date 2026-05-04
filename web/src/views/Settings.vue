@@ -86,70 +86,89 @@ onMounted(() => {
 <template>
   <div class="animate-fade-up">
     <div class="eyebrow">Configuration</div>
-    <h1>Settings</h1>
-    <p class="subtitle" style="margin-bottom: 2rem;">Configure engine intervals and system state</p>
+    <h1 style="margin-bottom: 0.5rem;">System Settings</h1>
+    <p class="subtitle" style="margin-bottom: 3rem;">Fine-tune engine intervals and manage core data states.</p>
 
     <div class="bento-grid">
       <!-- Scheduler Intervals -->
       <div class="col-span-8 glass-panel" style="padding: 1px;">
-        <div class="glass-panel-inner">
-          <h2 style="margin-bottom: 1.5rem; color: var(--text-primary);">Scheduler Intervals</h2>
+        <div class="glass-panel-inner" style="display: flex; flex-direction: column; gap: 2rem;">
+          <div>
+            <h2 style="color: var(--text-primary); margin-bottom: 0.5rem;">Scheduler Intervals</h2>
+            <p class="subtitle" style="font-size: 0.85rem;">Adjust the background sync frequency. Requires standard time durations (e.g., 5m, 30s).</p>
+          </div>
           
-          <div v-if="loading" class="subtitle">Loading settings...</div>
+          <div v-if="loading" class="subtitle" style="padding: 2rem 0;">Loading settings...</div>
           
-          <form v-else @submit.prevent="saveSettings">
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem;">
+          <form v-else @submit.prevent="saveSettings" style="display: flex; flex-direction: column; gap: 2rem;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
               <div class="form-group">
                 <label>Order Sync Interval</label>
-                <input type="text" v-model="settings.order_sync_interval" class="form-input" placeholder="e.g. 15m" required>
-                <span class="help-text">Time between pulling new orders from Flux.</span>
+                <div class="input-wrapper">
+                  <input type="text" v-model="settings.order_sync_interval" class="form-input" placeholder="15m" required>
+                  <div class="input-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+                </div>
+                <span class="help-text">Pull new orders from Flux</span>
               </div>
               
               <div class="form-group">
                 <label>Carton Sync Interval</label>
-                <input type="text" v-model="settings.carton_sync_interval" class="form-input" placeholder="e.g. 30m" required>
-                <span class="help-text">Time between updating carton master data.</span>
+                <div class="input-wrapper">
+                  <input type="text" v-model="settings.carton_sync_interval" class="form-input" placeholder="30m" required>
+                  <div class="input-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></div>
+                </div>
+                <span class="help-text">Update carton master data</span>
               </div>
 
               <div class="form-group">
                 <label>Recommendation Interval</label>
-                <input type="text" v-model="settings.recommendation_interval" class="form-input" placeholder="e.g. 5m" required>
-                <span class="help-text">How often the engine computes recommendations.</span>
+                <div class="input-wrapper">
+                  <input type="text" v-model="settings.recommendation_interval" class="form-input" placeholder="5m" required>
+                  <div class="input-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m12 16 4-4-4-4"/><path d="M8 12h8"/></svg></div>
+                </div>
+                <span class="help-text">Compute recommendations</span>
               </div>
 
               <div class="form-group">
                 <label>Push Interval</label>
-                <input type="text" v-model="settings.push_interval" class="form-input" placeholder="e.g. 5m" required>
-                <span class="help-text">How often the engine pushes results back to Flux.</span>
+                <div class="input-wrapper">
+                  <input type="text" v-model="settings.push_interval" class="form-input" placeholder="5m" required>
+                  <div class="input-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></div>
+                </div>
+                <span class="help-text">Push results to Flux</span>
               </div>
             </div>
             
-            <div style="display: flex; gap: 1rem; align-items: center; padding-top: 1.5rem; border-top: 1px solid var(--border-color);">
+            <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 1.5rem; border-top: 1px dashed var(--border-color);">
+              <div style="display: flex; gap: 1rem; align-items: center;">
+                <div v-if="message && !error" class="badge success">{{ message }}</div>
+                <div v-if="error" class="badge error">{{ error }}</div>
+              </div>
               <button type="submit" class="btn-primary" :disabled="saving" style="background: rgba(16,185,129,0.1); border-color: rgba(16,185,129,0.3); color: #10b981;">
                 <svg v-if="!saving" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                 <svg v-else class="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                {{ saving ? 'Saving...' : 'Save Settings' }}
+                {{ saving ? 'Applying...' : 'Apply Changes' }}
               </button>
-              <div v-if="message && !error" class="badge success">{{ message }}</div>
-              <div v-if="error" class="badge error">{{ error }}</div>
             </div>
           </form>
         </div>
       </div>
 
       <!-- Danger Zone -->
-      <div class="col-span-4 glass-panel danger-panel" style="padding: 1px;">
-        <div class="glass-panel-inner danger-inner">
-          <div class="eyebrow" style="background: rgba(239, 68, 68, 0.2); color: #ef4444;">Danger Zone</div>
-          <h2 style="color: #ef4444; margin-bottom: 0.5rem;">System Reset</h2>
-          <p class="subtitle" style="font-size: 0.85rem; margin-bottom: 2rem; color: rgba(255,255,255,0.7);">
-            Permanently delete all orders, items, products, cartons, and logs. This cannot be undone. The engine will be automatically stopped.
-          </p>
+      <div class="col-span-4 glass-panel danger-panel" style="padding: 1px; display: flex; flex-direction: column;">
+        <div class="glass-panel-inner danger-inner" style="flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div class="eyebrow" style="background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3);">Danger Zone</div>
+            <h2 style="color: #ef4444; margin-bottom: 0.5rem; font-size: 1.75rem;">System Reset</h2>
+            <p class="subtitle" style="font-size: 0.9rem; line-height: 1.5; margin-bottom: 2rem; color: rgba(255,255,255,0.7);">
+              Permanently wipe the database: orders, items, products, cartons, and logs. This process is irreversible and forces the engine to halt.
+            </p>
+          </div>
           
-          <button @click="resetDatabase" class="btn-primary" style="background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); color: #ef4444; width: 100%; justify-content: center;" :disabled="resetting">
+          <button @click="resetDatabase" class="btn-primary" style="background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); color: #ef4444; width: 100%; justify-content: center; padding: 1rem;" :disabled="resetting">
             <svg v-if="!resetting" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
             <svg v-else class="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-            {{ resetting ? 'Resetting Database...' : 'Reset Database' }}
+            {{ resetting ? 'Purging Database...' : 'Erase Everything' }}
           </button>
         </div>
       </div>
@@ -182,7 +201,7 @@ onMounted(() => {
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  padding: 0.875rem 1rem;
+  padding: 0.875rem 1rem 0.875rem 2.5rem; /* left padding for icon */
   color: #fff;
   font-family: inherit;
   font-size: 0.95rem;
@@ -194,6 +213,22 @@ onMounted(() => {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.1), inset 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-icon {
+  position: absolute;
+  left: 0.75rem;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
 }
 
 .danger-panel {

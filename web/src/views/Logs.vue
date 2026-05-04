@@ -30,22 +30,10 @@ const setSort = (field) => {
 onMounted(() => {
   fetchLogs()
 
-  // Real-time updates via SSE
-  const eventSource = new EventSource('http://localhost:8080/api/dashboard/logs/stream')
-  eventSource.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data)
-      if (data.type === 'update') {
-        fetchLogs()
-      }
-    } catch (e) {
-      console.error('SSE Error:', e)
-    }
-  }
+  // Standard polling for robust updates
+  const interval = setInterval(fetchLogs, 5000)
 
-  return () => {
-    eventSource.close()
-  }
+  return () => clearInterval(interval)
 })
 
 const getBadgeClass = (status) => {

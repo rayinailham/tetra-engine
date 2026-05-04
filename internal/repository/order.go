@@ -119,6 +119,25 @@ func (r *OrderRepository) GetOrdersByStatus(ctx context.Context, status string) 
 	return orders, nil
 }
 
+// GetOrdersByStatuses retrieves all orders with any of the given statuses.
+func (r *OrderRepository) GetOrdersByStatuses(ctx context.Context, statuses []string) ([]domain.Order, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	query, args, err := sqlx.In("SELECT * FROM orders WHERE status IN (?) ORDER BY id", statuses)
+	if err != nil {
+		return nil, oops.In("order-repository").Wrapf(err, "building IN query")
+	}
+	query = r.db.Rebind(query)
+
+	var orders []domain.Order
+	err = r.db.SelectContext(ctx, &orders, query, args...)
+	if err != nil {
+		return nil, oops.In("order-repository").Wrapf(err, "querying orders by statuses")
+	}
+	return orders, nil
+}
+
 // GetOrderItemsByOrderID retrieves all items for a given order.
 func (r *OrderRepository) GetOrderItemsByOrderID(ctx context.Context, orderID int64) ([]domain.OrderItem, error) {
 	var items []domain.OrderItem
@@ -133,8 +152,8 @@ func (r *OrderRepository) GetOrderItemsByOrderID(ctx context.Context, orderID in
 	return items, nil
 }
 
-// UpdateOrderStatus updates the status and related timestamp of an order.
-func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID int64, status string, cartonID *int64) error {
+// UpdateOrderStatus updates the status, related timestamp, and reasoning of an order.
+func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID int64, status string, cartonID *int64, reason *string) error {
 	var query string
 	var args []interface{}
 
@@ -145,14 +164,14 @@ func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID int64, 
 		query = "UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3"
 		args = []interface{}{status, now, orderID}
 	case domain.OrderStatusRecommended:
-		query = "UPDATE orders SET status = $1, carton_id = $2, recommended_at = $3, updated_at = $3 WHERE id = $4"
-		args = []interface{}{status, cartonID, now, orderID}
+		query = "UPDATE orders SET status = $1, carton_id = $2, reason = $3, recommended_at = $4, updated_at = $4 WHERE id = $5"
+		args = []interface{}{status, cartonID, reason, now, orderID}
 	case domain.OrderStatusPushed:
 		query = "UPDATE orders SET status = $1, pushed_at = $2, updated_at = $2 WHERE id = $3"
 		args = []interface{}{status, now, orderID}
 	case domain.OrderStatusError:
-		query = "UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3"
-		args = []interface{}{status, now, orderID}
+		query = "UPDATE orders SET status = $1, reason = $2, updated_at = $3 WHERE id = $4"
+		args = []interface{}{status, reason, now, orderID}
 	default:
 		query = "UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3"
 		args = []interface{}{status, now, orderID}

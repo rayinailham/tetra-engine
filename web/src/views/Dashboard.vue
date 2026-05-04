@@ -52,6 +52,8 @@ const formatTime = (ts) => {
 
 onMounted(() => {
   fetchStats()
+  const interval = setInterval(fetchStats, 5000)
+  return () => clearInterval(interval)
 })
 </script>
 

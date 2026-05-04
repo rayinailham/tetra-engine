@@ -56,6 +56,7 @@ type OrderRow struct {
 	SyncedAt      *string `json:"synced_at" db:"synced_at"`
 	RecommendedAt *string `json:"recommended_at" db:"recommended_at"`
 	PushedAt      *string `json:"pushed_at" db:"pushed_at"`
+	Reason        *string `json:"reason" db:"reason"`
 	CreatedAt     string  `json:"created_at" db:"created_at"`
 	UpdatedAt     string  `json:"updated_at" db:"updated_at"`
 	ItemCount     int     `json:"item_count" db:"item_count"`
@@ -173,7 +174,7 @@ func (s *Server) handleDashboardOrders(w http.ResponseWriter, r *http.Request) {
 
 	var orders []OrderRow
 	err := s.db.SelectContext(ctx, &orders, `
-		SELECT o.id, o.code, o.warehouse_id, o.status, o.carton_id,
+		SELECT o.id, o.code, o.warehouse_id, o.status, o.carton_id, o.reason,
 		       TO_CHAR(o.flux_created_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS flux_created_at,
 		       TO_CHAR(o.synced_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS synced_at,
 		       TO_CHAR(o.recommended_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS recommended_at,
@@ -209,7 +210,7 @@ func (s *Server) handleDashboardOrderDetail(w http.ResponseWriter, r *http.Reque
 
 	var order OrderRow
 	err = s.db.QueryRowxContext(ctx, `
-		SELECT o.id, o.code, o.warehouse_id, o.status, o.carton_id,
+		SELECT o.id, o.code, o.warehouse_id, o.status, o.carton_id, o.reason,
 		       TO_CHAR(o.flux_created_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS flux_created_at,
 		       TO_CHAR(o.synced_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS synced_at,
 		       TO_CHAR(o.recommended_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS recommended_at,
@@ -337,41 +338,6 @@ func (s *Server) handleDashboardLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, logs)
-}
-
-// handleDashboardLogsStream provides a Server-Sent Events stream for log updates.
-func (s *Server) handleDashboardLogsStream(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	ch, cleanup := s.scheduler.Subscribe()
-	defer cleanup()
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-
-	// Send initial ping
-	fmt.Fprintf(w, "data: {\"type\":\"connected\"}\n\n")
-	flusher.Flush()
-
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-ch:
-			// Notify client to refresh logs
-			fmt.Fprintf(w, "data: {\"type\":\"update\"}\n\n")
-			flusher.Flush()
-		case <-time.After(30 * time.Second):
-			// Keep alive
-			fmt.Fprintf(w, "data: {\"type\":\"ping\"}\n\n")
-			flusher.Flush()
-		}
-	}
 }
 
 // handleEngineStatus returns the current running status of the scheduler engine.

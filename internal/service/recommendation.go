@@ -311,7 +311,8 @@ func (s *RecommendationService) doProcessRecommendations(ctx context.Context, pr
 				slog.Int("total_volume_mm3", totalVolume),
 				slog.Int("total_weight_g", totalWeight),
 			)
-			if err := s.orderRepo.UpdateOrderStatus(ctx, order.ID, domain.OrderStatusError, nil); err != nil {
+			reason := fmt.Sprintf("No carton fits Volume: %d mm³, Weight: %d g", totalVolume, totalWeight)
+			if err := s.orderRepo.UpdateOrderStatus(ctx, order.ID, domain.OrderStatusError, nil, &reason); err != nil {
 				s.logger.Error("failed to mark order as error", slog.Any("error", err))
 			}
 			continue
@@ -319,7 +320,8 @@ func (s *RecommendationService) doProcessRecommendations(ctx context.Context, pr
 
 		// Update order with recommended carton ID
 		cartonID := carton.ID
-		if err := s.orderRepo.UpdateOrderStatus(ctx, order.ID, domain.OrderStatusRecommended, &cartonID); err != nil {
+		reason := fmt.Sprintf("Fits in %s (Vol: %d mm³, MaxWt: %d g)", carton.Code, carton.Volume(), carton.MaxWeight)
+		if err := s.orderRepo.UpdateOrderStatus(ctx, order.ID, domain.OrderStatusRecommended, &cartonID, &reason); err != nil {
 			s.logger.Error("failed to update order with recommendation",
 				slog.Int64("order_id", order.ID),
 				slog.Any("error", err),
@@ -369,33 +371,59 @@ func (s *RecommendationService) PushRecommendations(ctx context.Context) error {
 }
 
 func (s *RecommendationService) doPushRecommendations(ctx context.Context, processed *int) error {
-	// Get RECOMMENDED orders
-	orders, err := s.orderRepo.GetOrdersByStatus(ctx, domain.OrderStatusRecommended)
+	// Get RECOMMENDED and NO RECOMMENDATION orders
+	orders, err := s.orderRepo.GetOrdersByStatuses(ctx, []string{domain.OrderStatusRecommended, domain.OrderStatusError})
 	if err != nil {
-		return oops.In("service").Wrapf(err, "fetching recommended orders")
+		return oops.In("service").Wrapf(err, "fetching orders for push")
 	}
 
 	if len(orders) == 0 {
-		s.logger.Info("no recommended orders to push")
+		s.logger.Info("no orders to push")
 		return nil
 	}
 
 	s.logger.Info("pushing recommendations to flux", slog.Int("count", len(orders)))
 
 	for _, order := range orders {
-		if order.CartonID == nil {
-			s.logger.Error("recommended order missing carton_id",
-				slog.Int64("order_id", order.ID),
-				slog.String("order_code", order.Code),
-			)
-			continue
-		}
+		var fluxCartonID *string
 
-		// Look up local carton to get the code string
-		localCarton, err := s.cartonRepo.GetCartonByID(ctx, *order.CartonID)
-		if err != nil || localCarton == nil {
-			s.logger.Error("failed to find local carton by id", slog.Int64("carton_id", *order.CartonID))
-			continue
+		// Only look up carton if it was successfully recommended
+		if order.Status == domain.OrderStatusRecommended {
+			if order.CartonID == nil {
+				s.logger.Error("recommended order missing carton_id",
+					slog.Int64("order_id", order.ID),
+					slog.String("order_code", order.Code),
+				)
+				continue
+			}
+
+			// Look up local carton to get the code string
+			localCarton, err := s.cartonRepo.GetCartonByID(ctx, *order.CartonID)
+			if err != nil || localCarton == nil {
+				s.logger.Error("failed to find local carton by id", slog.Int64("carton_id", *order.CartonID))
+				continue
+			}
+
+			// Look up carton by code to get its Flux ID
+			fluxCartons, err := s.fluxClient.GetCartons(ctx)
+			if err != nil {
+				return oops.In("service").Wrapf(err, "fetching flux cartons for push")
+			}
+
+			for _, fc := range fluxCartons {
+				if fc.Code == localCarton.Code {
+					idStr := fmt.Sprintf("%d", fc.ID)
+					fluxCartonID = &idStr
+					break
+				}
+			}
+
+			if fluxCartonID == nil {
+				s.logger.Error("could not find flux carton ID for code",
+					slog.String("carton_code", localCarton.Code),
+				)
+				continue
+			}
 		}
 
 		// Look up the original Flux order by code to get the Flux numeric ID
@@ -419,27 +447,6 @@ func (s *RecommendationService) doPushRecommendations(ctx context.Context, proce
 			continue
 		}
 
-		// Look up carton by code to get its Flux ID
-		fluxCartons, err := s.fluxClient.GetCartons(ctx)
-		if err != nil {
-			return oops.In("service").Wrapf(err, "fetching flux cartons for push")
-		}
-
-		var fluxCartonID string
-		for _, fc := range fluxCartons {
-			if fc.Code == localCarton.Code {
-				fluxCartonID = fmt.Sprintf("%d", fc.ID)
-				break
-			}
-		}
-
-		if fluxCartonID == "" {
-			s.logger.Error("could not find flux carton ID for code",
-				slog.String("carton_code", localCarton.Code),
-			)
-			continue
-		}
-
 		// Push to Flux
 		req := domain.FluxAssignCartonRequest{
 			OrderID:   fluxOrderID,
@@ -456,8 +463,8 @@ func (s *RecommendationService) doPushRecommendations(ctx context.Context, proce
 			continue
 		}
 
-		// Mark as PUSHED
-		if err := s.orderRepo.UpdateOrderStatus(ctx, order.ID, domain.OrderStatusPushed, nil); err != nil {
+		// Mark as PUSHED, maintaining the original reason
+		if err := s.orderRepo.UpdateOrderStatus(ctx, order.ID, domain.OrderStatusPushed, order.CartonID, order.Reason); err != nil {
 			s.logger.Error("failed to mark order as pushed",
 				slog.Int64("order_id", order.ID),
 				slog.Any("error", err),

@@ -40,7 +40,7 @@ SYNCED → PENDING → RECOMMENDED → PUSHED
 - **Automated Data Sync** — 4-stage idempotent pipeline for Flux WMS integration.
 - **Volumetric Recommendation** — Optimized algorithm using integer arithmetic (mm/g).
 - **Auto-Migration** — Database schema is automatically applied on startup.
-- **Real-time Monitoring** — Dashboard with **Server-Sent Events (SSE)** for live log updates.
+- **Real-time Monitoring** — Dashboard with smooth robust polling for live updates.
 - **High-End UI** — Premium glassmorphism dashboard built with Vue.js 3.
 
 ## Quick Start
@@ -79,7 +79,6 @@ The monitoring dashboard will be available at `http://localhost:5173`.
 | `GET` | `/api/dashboard/orders` | Recent orders list with sorting support |
 | `GET` | `/api/dashboard/cartons` | Available cartons list |
 | `GET` | `/api/dashboard/logs` | Recent scheduler logs with sorting support |
-| `GET` | `/api/dashboard/logs/stream` | **SSE Stream** for real-time log updates |
 | `GET` | `/api/dashboard/engine/status` | Engine running status |
 | `POST` | `/api/dashboard/engine/start` | Start the scheduler engine |
 | `POST` | `/api/dashboard/engine/stop` | Stop the scheduler engine |

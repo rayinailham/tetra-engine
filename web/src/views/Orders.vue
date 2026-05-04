@@ -21,6 +21,8 @@ const fetchOrders = async () => {
 
 onMounted(() => {
   fetchOrders()
+  const interval = setInterval(fetchOrders, 5000)
+  return () => clearInterval(interval)
 })
 
 const viewDetails = async (id) => {
@@ -50,7 +52,7 @@ const getBadgeClass = (status) => {
   switch (status) {
     case 'SYNCED': return 'badge'
     case 'PENDING': return 'badge info'
-    case 'RECOMMENDED': return 'badge warning'
+    case 'RECOMMENDED': return 'badge success'
     case 'PUSHED': return 'badge success'
     case 'NO RECOMMENDATION': return 'badge error'
     default: return 'badge'
@@ -88,7 +90,7 @@ const formatTime = (ts) => {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity: 0.5;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                 {{ order.code }}
               </td>
-              <td><span :class="getBadgeClass(order.status)">{{ order.status }}</span></td>
+              <td><span :class="getBadgeClass(order.status)" :title="order.reason">{{ order.status }}</span></td>
               <td>
                 <span v-if="order.carton_id" style="font-family: monospace;">{{ order.carton_id }}</span>
                 <span v-else style="color: var(--text-secondary);">-</span>
@@ -130,6 +132,10 @@ const formatTime = (ts) => {
             <div>
               <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 0.1em; margin-bottom: 0.25rem;">Carton Assigned</div>
               <div style="font-family: monospace; font-size: 1.1rem;">{{ selectedOrder.carton_id || 'None' }}</div>
+            </div>
+            <div v-if="selectedOrder.reason" style="grid-column: span 2; margin-top: 0.5rem; padding-top: 1rem; border-top: 1px dashed var(--border-color);">
+              <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 0.1em; margin-bottom: 0.25rem;">Recommendation Note</div>
+              <div style="font-size: 0.95rem; color: var(--text-primary);">{{ selectedOrder.reason }}</div>
             </div>
           </div>
           

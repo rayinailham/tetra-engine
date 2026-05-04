@@ -86,6 +86,10 @@ func Migrate(db *sqlx.DB, logger *slog.Logger) error {
 			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'order_items' AND column_name = 'sku_name') THEN
 				ALTER TABLE order_items DROP COLUMN sku_name;
 			END IF;
+			-- Add reason column to orders if missing
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'orders' AND column_name = 'reason') THEN
+				ALTER TABLE orders ADD COLUMN reason TEXT;
+			END IF;
 		END $$;`
 
 	_, err = db.Exec(reconcileQuery)
