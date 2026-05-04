@@ -131,8 +131,9 @@ For each pending order:
 
 The Tetra Engine features a highly optimized data processing layer:
 1. **Integer Precision:** Dimensions from Flux (cm/kg) are normalized to integers (mm/g) before storage. This avoids floating-point inaccuracies and significantly speeds up volumetric calculations.
-2. **Schema Reconciliation:** The engine automatically reconciles database columns on startup, ensuring the latest optimized types are always in use.
-3. **Database ENUMs:** Status fields are implemented as Postgres ENUMs for maximum storage efficiency and strict data integrity.
-4. **Resilient Sync:** Every API and DB operation is wrapped in context-aware timeouts and atomic transactions.
+2. **Parallel Sync Pipeline:** Uses high-concurrency patterns (**errgroup + semaphores**) to fetch order details from Flux in parallel, drastically reducing total sync time.
+3. **Bulk DB Operations:** Eliminates N+1 query problems by using batch retrieval for order items and idempotent `ON CONFLICT` upserts.
+4. **Schema Reconciliation:** The engine automatically reconciles database columns on startup, ensuring the latest optimized types are always in use.
+5. **Resilient Sync:** Every API and DB operation is wrapped in context-aware timeouts and atomic transactions.
 
 For full technical details, see [`docs/technical-review.md`](docs/technical-review.md).

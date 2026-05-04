@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/samber/oops"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/anteraja/tetra-engine/internal/client"
 	"github.com/anteraja/tetra-engine/internal/config"
@@ -81,79 +83,93 @@ func (s *RecommendationService) doSyncOrders(ctx context.Context, processed *int
 
 	s.logger.Info("fetched orders from flux", slog.Int("count", len(fluxOrders)))
 
-	// Step 2: For each order, fetch detail and upsert
+	// Step 2: Parallel fetch details and upsert
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(10) // Concurrency limit to protect Flux API and DB connections
+
+	var mu sync.Mutex
 	for _, fo := range fluxOrders {
-		// Fetch order detail with items
-		detail, err := s.fluxClient.GetOrderDetail(ctx, fo.ID)
-		if err != nil {
-			s.logger.Error("failed to fetch order detail",
-				slog.Int("flux_order_id", fo.ID),
-				slog.Any("error", err),
+		orderInfo := fo // capture loop variable
+		g.Go(func() error {
+			// Fetch order detail with items
+			detail, err := s.fluxClient.GetOrderDetail(gCtx, orderInfo.ID)
+			if err != nil {
+				s.logger.Error("failed to fetch order detail",
+					slog.Int("flux_order_id", orderInfo.ID),
+					slog.Any("error", err),
+				)
+				return nil // continue other orders
+			}
+
+			// Parse timestamps
+			fluxCreatedAt, _ := time.Parse(time.RFC3339, orderInfo.CreatedAt)
+
+			now := time.Now()
+			order := &domain.Order{
+				FluxID:        orderInfo.ID,
+				Code:          orderInfo.Code,
+				WarehouseID:   orderInfo.WarehouseID,
+				Status:        domain.OrderStatusSynced,
+				FluxCreatedAt: &fluxCreatedAt,
+				SyncedAt:      &now,
+			}
+
+			// Upsert order
+			localOrderID, err := s.orderRepo.UpsertOrder(gCtx, order)
+			if err != nil {
+				s.logger.Error("failed to upsert order",
+					slog.String("order_code", orderInfo.Code),
+					slog.Any("error", err),
+				)
+				return nil
+			}
+
+			// Convert and insert items/products
+			items := make([]domain.OrderItem, 0, len(detail.Details))
+			products := make([]domain.Product, 0, len(detail.Details))
+			for _, di := range detail.Details {
+				length, _ := strconv.ParseFloat(di.Length, 64)
+				width, _ := strconv.ParseFloat(di.Width, 64)
+				height, _ := strconv.ParseFloat(di.Height, 64)
+				weight, _ := strconv.ParseFloat(di.Weight, 64)
+
+				productName := di.SKUName
+				products = append(products, domain.Product{
+					SKU:  di.SKU,
+					Name: &productName,
+				})
+
+				items = append(items, domain.OrderItem{
+					SKU:    di.SKU,
+					Qty:    di.Qty,
+					Length: int(length * 10),    // cm to mm
+					Width:  int(width * 10),
+					Height: int(height * 10),
+					Weight: int(weight * 1000), // kg to grams
+				})
+			}
+
+			if err := s.orderRepo.InsertOrderItems(gCtx, localOrderID, items, products); err != nil {
+				s.logger.Error("failed to insert order items",
+					slog.Int64("order_id", localOrderID),
+					slog.Any("error", err),
+				)
+				return nil
+			}
+
+			mu.Lock()
+			*processed++
+			mu.Unlock()
+			s.logger.Debug("synced order",
+				slog.String("code", orderInfo.Code),
+				slog.Int64("local_id", localOrderID),
 			)
-			continue
-		}
+			return nil
+		})
+	}
 
-		// Parse timestamps
-		fluxCreatedAt, _ := time.Parse(time.RFC3339, fo.CreatedAt)
-
-		now := time.Now()
-		order := &domain.Order{
-			FluxID:        fo.ID,
-			Code:          fo.Code,
-			WarehouseID:   fo.WarehouseID,
-			Status:        domain.OrderStatusSynced,
-			FluxCreatedAt: &fluxCreatedAt,
-			SyncedAt:      &now,
-		}
-
-		// Upsert order
-		localOrderID, err := s.orderRepo.UpsertOrder(ctx, order)
-		if err != nil {
-			s.logger.Error("failed to upsert order",
-				slog.String("order_code", fo.Code),
-				slog.Any("error", err),
-			)
-			continue
-		}
-
-		// Convert and insert items/products
-		items := make([]domain.OrderItem, 0, len(detail.Details))
-		products := make([]domain.Product, 0, len(detail.Details))
-		for _, di := range detail.Details {
-			length, _ := strconv.ParseFloat(di.Length, 64)
-			width, _ := strconv.ParseFloat(di.Width, 64)
-			height, _ := strconv.ParseFloat(di.Height, 64)
-			weight, _ := strconv.ParseFloat(di.Weight, 64)
-
-			productName := di.SKUName
-			products = append(products, domain.Product{
-				SKU:  di.SKU,
-				Name: &productName,
-			})
-
-			items = append(items, domain.OrderItem{
-				SKU:    di.SKU,
-				Qty:    di.Qty,
-				Length: int(length * 10),    // cm to mm
-				Width:  int(width * 10),
-				Height: int(height * 10),
-				Weight: int(weight * 1000), // kg to grams
-			})
-		}
-
-		if err := s.orderRepo.InsertOrderItems(ctx, localOrderID, items, products); err != nil {
-			s.logger.Error("failed to insert order items",
-				slog.Int64("order_id", localOrderID),
-				slog.Any("error", err),
-			)
-			continue
-		}
-
-		*processed++
-		s.logger.Debug("synced order",
-			slog.String("code", fo.Code),
-			slog.Int64("local_id", localOrderID),
-		)
+	if err := g.Wait(); err != nil {
+		return oops.In("service").Wrapf(err, "syncing orders in parallel")
 	}
 
 	// Step 3: Transition SYNCED → PENDING
@@ -289,14 +305,28 @@ func (s *RecommendationService) doProcessRecommendations(ctx context.Context, pr
 		slog.Int("available_cartons", len(cartons)),
 	)
 
+	// Step 1: Bulk fetch all items for all pending orders (Optimized)
+	orderIDs := make([]int64, len(orders))
+	for i, o := range orders {
+		orderIDs[i] = o.ID
+	}
+
+	allItems, err := s.orderRepo.GetOrderItemsByOrderIDs(ctx, orderIDs)
+	if err != nil {
+		return oops.In("service").Wrapf(err, "bulk fetching order items")
+	}
+
+	// Step 2: Group items by OrderID for O(1) lookup
+	itemsMap := make(map[int64][]domain.OrderItem)
+	for _, item := range allItems {
+		itemsMap[item.OrderID] = append(itemsMap[item.OrderID], item)
+	}
+
+	// Step 3: Process each order using pre-fetched items
 	for _, order := range orders {
-		// Get items for this order
-		items, err := s.orderRepo.GetOrderItemsByOrderID(ctx, order.ID)
-		if err != nil {
-			s.logger.Error("failed to fetch order items",
-				slog.Int64("order_id", order.ID),
-				slog.Any("error", err),
-			)
+		items := itemsMap[order.ID]
+		if len(items) == 0 {
+			s.logger.Warn("order has no items, skipping", slog.Int64("order_id", order.ID))
 			continue
 		}
 

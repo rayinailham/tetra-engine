@@ -154,6 +154,26 @@ func (r *OrderRepository) GetOrderItemsByOrderID(ctx context.Context, orderID in
 	return items, nil
 }
 
+// GetOrderItemsByOrderIDs retrieves all items for multiple orders in a single query.
+func (r *OrderRepository) GetOrderItemsByOrderIDs(ctx context.Context, orderIDs []int64) ([]domain.OrderItem, error) {
+	if len(orderIDs) == 0 {
+		return nil, nil
+	}
+
+	query, args, err := sqlx.In("SELECT * FROM order_items WHERE order_id IN (?)", orderIDs)
+	if err != nil {
+		return nil, oops.In("order-repository").Wrapf(err, "building IN query for items")
+	}
+	query = r.db.Rebind(query)
+
+	var items []domain.OrderItem
+	err = r.db.SelectContext(ctx, &items, query, args...)
+	if err != nil {
+		return nil, oops.In("order-repository").Wrapf(err, "querying order items by IDs")
+	}
+	return items, nil
+}
+
 // UpdateOrderStatus updates the status, related timestamp, and reasoning of an order.
 func (r *OrderRepository) UpdateOrderStatus(ctx context.Context, orderID int64, status string, cartonID *int64, reason *string) error {
 	var query string

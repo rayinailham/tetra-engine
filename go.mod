@@ -1,6 +1,6 @@
 module github.com/anteraja/tetra-engine
 
-go 1.24.3
+go 1.25.0
 
 require (
 	github.com/jmoiron/sqlx v1.4.0
@@ -10,6 +10,8 @@ require (
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/fx v1.24.0
 )
+
+require golang.org/x/sync v0.20.0 // indirect
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect

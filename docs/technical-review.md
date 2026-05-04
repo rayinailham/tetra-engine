@@ -11,10 +11,12 @@ This document provides a technical review of the **Tetra Recommendation Engine**
 - **Optimized Algorithm**: The `FindBestCarton` algorithm assumes a pre-sorted list of cartons (by volume), achieving $O(N)$ efficiency where $N$ is the number of carton types.
 - **Unit Normalization**: The system normalizes units (cm → mm, kg → grams) during the sync phase, preventing expensive floating-point conversions during the core recommendation loop.
 - **Idempotent Upserts**: Use of `ON CONFLICT` in PostgreSQL ensures that repeated sync runs are efficient and don't create duplicate records.
+- **Parallel Data Fetching**: Optimized the Order Sync process using **Go Concurrency (errgroup)**, allowing multiple order details to be fetched in parallel while maintaining a safe concurrency limit.
+- **Batch Database Access**: The recommendation engine uses bulk fetching (`WHERE order_id IN (...)`) to retrieve all items for all pending orders in a single query, eliminating the N+1 query problem.
 
 ### 2.2 Areas for Improvement
-- **N+1 API Pattern**: During order sync, the engine fetches the order list and then calls `GET /orders/{id}` for *every* order. For large batches, this could be optimized if Flux supports bulk retrieval.
-- **Database Query Loops**: The recommendation service fetches pending orders and then queries the database for items of each order individually. This could be optimized using a single JOIN query or a batch fetch using `WHERE order_id IN (...)`.
+- **Flux API Bulk Support**: Currently, we use parallel calls because the Flux API doesn't provide a bulk detail endpoint. If a bulk endpoint is added in the future, it should be adopted to further reduce network overhead.
+- **Memory Management**: For extremely high volumes (e.g., >100k pending orders), adding pagination to the recommendation loop would be a proactive scalability measure.
 
 ---
 
@@ -62,9 +64,18 @@ This document provides a technical review of the **Tetra Recommendation Engine**
 - **Observability**: High-quality logging using `slog` with a custom `tint` handler for human-readable terminal output.
 - **Type Safety**: Use of Go generics and strong typing throughout the data transformation layers.
 
+## Performance Optimization
+
+The Tetra Engine features a highly optimized data processing layer:
+1. **Integer Precision:** Dimensions from Flux (cm/kg) are normalized to integers (mm/g) before storage. This avoids floating-point inaccuracies and significantly speeds up volumetric calculations.
+2. **Parallel Sync Pipeline:** Uses high-concurrency patterns (**errgroup + semaphores**) to fetch order details from Flux in parallel, drastically reducing the total sync time.
+3. **Bulk DB Operations:** Eliminates N+1 query problems by using batch retrieval for order items and idempotent `ON CONFLICT` upserts for orders and cartons.
+4. **Schema Reconciliation:** The engine automatically reconciles database columns on startup, ensuring the latest optimized types are always in use.
+5. **Resilient Sync:** Every API and DB operation is wrapped in context-aware timeouts and atomic transactions.
+
 ---
 
 ## 8. Conclusion
-The Tetra Recommendation Engine is **production-ready** and aligns perfectly with the architectural vision. The implementation prioritizes reliability and traceability, which are critical for warehouse operations. While there are minor optimization opportunities in batching API and DB calls, the current design is more than sufficient for the target workload.
+The Tetra Recommendation Engine is **production-ready** and aligns perfectly with the architectural vision. The implementation prioritizes reliability and traceability, which are critical for warehouse operations. The current design is more than sufficient for the target workload.
 
 **Status:** ✅ Approved for Deployment
