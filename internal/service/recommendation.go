@@ -134,10 +134,10 @@ func (s *RecommendationService) doSyncOrders(ctx context.Context, processed *int
 			items = append(items, domain.OrderItem{
 				SKU:    di.SKU,
 				Qty:    di.Qty,
-				Length: int(length * 10), // cm to mm
+				Length: int(length * 10),    // cm to mm
 				Width:  int(width * 10),
 				Height: int(height * 10),
-				Weight: int(weight),      // grams
+				Weight: int(weight * 1000), // kg to grams
 			})
 		}
 

@@ -211,7 +211,7 @@ const formatTime = (ts) => {
                   <td style="font-family: monospace;">{{ item.sku }}</td>
                   <td>{{ item.sku_name || '-' }}</td>
                   <td>{{ item.qty }}</td>
-                  <td>{{ item.length }} x {{ item.width }} x {{ item.height }} cm</td>
+                  <td>{{ item.length / 10 }} x {{ item.width / 10 }} x {{ item.height / 10 }} cm</td>
                   <td>{{ item.weight }} g</td>
                 </tr>
                 <tr v-if="selectedOrderItems.length === 0">

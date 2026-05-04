@@ -35,11 +35,11 @@ onMounted(async () => {
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; color: var(--text-secondary); font-size: 0.9rem;">
             <div>
               <div style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.7;">Dimensions</div>
-              <div>{{ carton.length }}x{{ carton.width }}x{{ carton.height }} cm</div>
+              <div>{{ carton.length / 10 }}x{{ carton.width / 10 }}x{{ carton.height / 10 }} cm</div>
             </div>
             <div>
               <div style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.7;">Volume</div>
-              <div>{{ carton.volume.toLocaleString() }} cm³</div>
+              <div>{{ (carton.volume / 1000).toLocaleString() }} cm³</div>
             </div>
             <div>
               <div style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.7;">Max Weight</div>
