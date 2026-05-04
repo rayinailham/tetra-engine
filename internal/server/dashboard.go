@@ -168,12 +168,16 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stats)
 }
 
-// handleDashboardOrders returns all orders with item count.
+// handleDashboardOrders returns all orders with item count, supporting filters.
 func (s *Server) handleDashboardOrders(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	var orders []OrderRow
-	err := s.db.SelectContext(ctx, &orders, `
+	// Parse filter parameters
+	status := r.URL.Query().Get("status")
+	date := r.URL.Query().Get("date")
+	hour := r.URL.Query().Get("hour")
+
+	query := `
 		SELECT o.id, o.code, o.warehouse_id, o.status, o.carton_id, o.reason,
 		       TO_CHAR(o.flux_created_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS flux_created_at,
 		       TO_CHAR(o.synced_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS synced_at,
@@ -183,9 +187,38 @@ func (s *Server) handleDashboardOrders(w http.ResponseWriter, r *http.Request) {
 		       TO_CHAR(o.updated_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS updated_at,
 		       COALESCE((SELECT COUNT(*) FROM order_items WHERE order_id = o.id), 0) AS item_count
 		FROM orders o
-		ORDER BY o.updated_at DESC`)
+		WHERE 1=1`
+
+	var args []interface{}
+	argCount := 1
+
+	if status != "" && status != "ALL" {
+		query += fmt.Sprintf(" AND o.status = $%d", argCount)
+		args = append(args, status)
+		argCount++
+	}
+
+	if date != "" {
+		query += fmt.Sprintf(" AND DATE(o.updated_at) = $%d", argCount)
+		args = append(args, date)
+		argCount++
+	}
+
+	if hour != "" {
+		h, err := strconv.Atoi(hour)
+		if err == nil {
+			query += fmt.Sprintf(" AND EXTRACT(HOUR FROM o.updated_at) = $%d", argCount)
+			args = append(args, h)
+			argCount++
+		}
+	}
+
+	query += " ORDER BY o.updated_at DESC"
+
+	var orders []OrderRow
+	err := s.db.SelectContext(ctx, &orders, query, args...)
 	if err != nil {
-		s.logger.Error("orders query failed", slog.Any("error", err))
+		s.logger.Error("orders query failed", slog.Any("error", err), slog.String("query", query))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database query failed"})
 		return
 	}

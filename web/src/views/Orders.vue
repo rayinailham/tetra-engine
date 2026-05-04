@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 
 const orders = ref([])
 const loading = ref(true)
@@ -8,9 +8,24 @@ const selectedOrderItems = ref([])
 const detailsLoading = ref(false)
 const detailsError = ref(null)
 
+// Filters
+const filterStatus = ref('ALL')
+const filterDate = ref('')
+const filterHour = ref('')
+
+watch([filterStatus, filterDate, filterHour], () => {
+  loading.value = true
+  fetchOrders()
+})
+
 const fetchOrders = async () => {
   try {
-    const res = await fetch('http://localhost:8080/api/dashboard/orders')
+    const params = new URLSearchParams()
+    if (filterStatus.value !== 'ALL') params.append('status', filterStatus.value)
+    if (filterDate.value) params.append('date', filterDate.value)
+    if (filterHour.value !== '') params.append('hour', filterHour.value)
+
+    const res = await fetch(`http://localhost:8080/api/dashboard/orders?${params.toString()}`)
     orders.value = await res.json()
   } catch (e) {
     console.error(e)
@@ -68,9 +83,48 @@ const formatTime = (ts) => {
 <template>
   <div class="animate-fade-up">
     <div class="eyebrow">Order Management</div>
-    <h1 style="margin-bottom: 2rem;">Orders</h1>
+    <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 2rem; gap: 2rem; flex-wrap: wrap;">
+      <div>
+        <h1 style="margin: 0;">Orders</h1>
+        <p class="subtitle" style="font-size: 0.85rem; margin-top: 0.25rem;">Monitor and manage warehouse outbound orders.</p>
+      </div>
+      
+      <div style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+        <!-- Status Filter -->
+        <div class="filter-group">
+          <label>Status</label>
+          <select v-model="filterStatus" class="filter-select">
+            <option value="ALL">All Status</option>
+            <option value="SYNCED">Synced</option>
+            <option value="PENDING">Pending</option>
+            <option value="RECOMMENDED">Recommended</option>
+            <option value="PUSHED">Pushed</option>
+            <option value="NO RECOMMENDATION">No Recommendation</option>
+          </select>
+        </div>
+
+        <!-- Date Filter -->
+        <div class="filter-group">
+          <label>Date</label>
+          <input type="date" v-model="filterDate" class="filter-input">
+        </div>
+
+        <!-- Hour Filter -->
+        <div class="filter-group">
+          <label>Hour</label>
+          <select v-model="filterHour" class="filter-select" style="min-width: 80px;">
+            <option value="">All</option>
+            <option v-for="h in 24" :key="h-1" :value="h-1">{{ (h-1).toString().padStart(2, '0') }}:00</option>
+          </select>
+        </div>
+
+        <button v-if="filterStatus !== 'ALL' || filterDate || filterHour" @click="() => { filterStatus='ALL'; filterDate=''; filterHour='' }" class="btn-clear">
+          Reset
+        </button>
+      </div>
+    </div>
     
-    <div v-if="loading" class="subtitle">Loading orders...</div>
+    <div v-if="loading && orders.length === 0" class="subtitle">Loading orders...</div>
     
     <div v-else class="glass-panel" style="padding: 1px;">
       <div class="glass-panel-inner" style="padding: 0; overflow-x: auto;">
@@ -174,6 +228,47 @@ const formatTime = (ts) => {
 </template>
 
 <style scoped>
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.filter-group label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+.filter-select, .filter-input {
+  background: var(--surface-2);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  outline: none;
+  transition: all 0.2s;
+}
+.filter-select:focus, .filter-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+.btn-clear {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 0.4rem 0.8rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  cursor: pointer;
+  align-self: flex-end;
+  transition: all 0.2s;
+}
+.btn-clear:hover {
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
 .modal-overlay {
   position: fixed;
   inset: 0;

@@ -28,9 +28,10 @@ func NewOrderRepository(db *sqlx.DB) *OrderRepository {
 // Returns the local database ID of the upserted order.
 func (r *OrderRepository) UpsertOrder(ctx context.Context, order *domain.Order) (int64, error) {
 	query := `
-		INSERT INTO orders (code, warehouse_id, status, flux_created_at, synced_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		INSERT INTO orders (flux_id, code, warehouse_id, status, flux_created_at, synced_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
 		ON CONFLICT (code) DO UPDATE SET
+			flux_id = EXCLUDED.flux_id,
 			warehouse_id = EXCLUDED.warehouse_id,
 			synced_at = EXCLUDED.synced_at,
 			updated_at = NOW()
@@ -38,6 +39,7 @@ func (r *OrderRepository) UpsertOrder(ctx context.Context, order *domain.Order) 
 
 	var id int64
 	err := r.db.QueryRowContext(ctx, query,
+		order.FluxID,
 		order.Code,
 		order.WarehouseID,
 		order.Status,

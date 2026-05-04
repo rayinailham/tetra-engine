@@ -90,6 +90,14 @@ func Migrate(db *sqlx.DB, logger *slog.Logger) error {
 			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'orders' AND column_name = 'reason') THEN
 				ALTER TABLE orders ADD COLUMN reason TEXT;
 			END IF;
+			-- Add flux_id to orders if missing
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'orders' AND column_name = 'flux_id') THEN
+				ALTER TABLE orders ADD COLUMN flux_id INT NOT NULL DEFAULT 0;
+			END IF;
+			-- Add flux_id to cartons if missing
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'cartons' AND column_name = 'flux_id') THEN
+				ALTER TABLE cartons ADD COLUMN flux_id INT NOT NULL DEFAULT 0;
+			END IF;
 		END $$;`
 
 	_, err = db.Exec(reconcileQuery)

@@ -12,6 +12,7 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS cartons (
     id          SERIAL          PRIMARY KEY,
+    flux_id     INT             NOT NULL DEFAULT 0,
     code        VARCHAR(50)     NOT NULL UNIQUE,
     length      INT             NOT NULL, -- Stored in millimeters (mm)
     width       INT             NOT NULL, -- Stored in millimeters (mm)
@@ -27,6 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_cartons_is_active ON cartons (is_active);
 
 CREATE TABLE IF NOT EXISTS orders (
     id              BIGSERIAL       PRIMARY KEY,
+    flux_id         INT             NOT NULL DEFAULT 0,
     code            VARCHAR(50)     NOT NULL UNIQUE,
     warehouse_id    VARCHAR(50),
     status          order_status    NOT NULL DEFAULT 'SYNCED',

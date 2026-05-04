@@ -25,9 +25,10 @@ func NewCartonRepository(db *sqlx.DB) *CartonRepository {
 // UpsertCarton inserts or updates a carton by its unique code.
 func (r *CartonRepository) UpsertCarton(ctx context.Context, carton *domain.Carton) error {
 	query := `
-		INSERT INTO cartons (code, length, width, height, max_weight, is_active, synced_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+		INSERT INTO cartons (flux_id, code, length, width, height, max_weight, is_active, synced_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
 		ON CONFLICT (code) DO UPDATE SET
+			flux_id = EXCLUDED.flux_id,
 			length = EXCLUDED.length,
 			width = EXCLUDED.width,
 			height = EXCLUDED.height,
@@ -38,6 +39,7 @@ func (r *CartonRepository) UpsertCarton(ctx context.Context, carton *domain.Cart
 
 	now := time.Now()
 	_, err := r.db.ExecContext(ctx, query,
+		carton.FluxID,
 		carton.Code,
 		carton.Length,
 		carton.Width,

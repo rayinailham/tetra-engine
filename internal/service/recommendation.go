@@ -98,6 +98,7 @@ func (s *RecommendationService) doSyncOrders(ctx context.Context, processed *int
 
 		now := time.Now()
 		order := &domain.Order{
+			FluxID:        fo.ID,
 			Code:          fo.Code,
 			WarehouseID:   fo.WarehouseID,
 			Status:        domain.OrderStatusSynced,
@@ -210,6 +211,7 @@ func (s *RecommendationService) doSyncCartons(ctx context.Context, processed *in
 		maxWeight, _ := strconv.ParseFloat(fc.MaxWeight, 64)
 
 		carton := &domain.Carton{
+			FluxID:    fc.ID,
 			Code:      fc.Code,
 			Length:    int(length * 10),     // cm to mm
 			Width:     int(width * 10),
@@ -382,6 +384,16 @@ func (s *RecommendationService) doPushRecommendations(ctx context.Context, proce
 		return nil
 	}
 
+	// Step 1: Pre-fetch all active cartons to avoid lookups in loop
+	localCartons, err := s.cartonRepo.GetActiveCartons(ctx)
+	if err != nil {
+		return oops.In("service").Wrapf(err, "fetching local cartons for push")
+	}
+	cartonMap := make(map[int64]domain.Carton)
+	for _, c := range localCartons {
+		cartonMap[c.ID] = c
+	}
+
 	s.logger.Info("pushing recommendations to flux", slog.Int("count", len(orders)))
 
 	for _, order := range orders {
@@ -397,59 +409,27 @@ func (s *RecommendationService) doPushRecommendations(ctx context.Context, proce
 				continue
 			}
 
-			// Look up local carton to get the code string
-			localCarton, err := s.cartonRepo.GetCartonByID(ctx, *order.CartonID)
-			if err != nil || localCarton == nil {
-				s.logger.Error("failed to find local carton by id", slog.Int64("carton_id", *order.CartonID))
+			// Get the local carton from pre-fetched map
+			localCarton, ok := cartonMap[*order.CartonID]
+			if !ok {
+				s.logger.Error("failed to find local carton in cache", slog.Int64("carton_id", *order.CartonID))
 				continue
 			}
 
-			// Look up carton by code to get its Flux ID
-			fluxCartons, err := s.fluxClient.GetCartons(ctx)
-			if err != nil {
-				return oops.In("service").Wrapf(err, "fetching flux cartons for push")
-			}
-
-			for _, fc := range fluxCartons {
-				if fc.Code == localCarton.Code {
-					idStr := fmt.Sprintf("%d", fc.ID)
-					fluxCartonID = &idStr
-					break
-				}
-			}
-
-			if fluxCartonID == nil {
-				s.logger.Error("could not find flux carton ID for code",
-					slog.String("carton_code", localCarton.Code),
-				)
-				continue
-			}
+			// Use the numeric FluxID stored in our database
+			idStr := fmt.Sprintf("%d", localCarton.FluxID)
+			fluxCartonID = &idStr
+		} else {
+			// For "NO RECOMMENDATION", we still push but send "0" or empty string
+			// as the carton_id since Flux API marked it as required.
+			// The user wants to push even if null. We send "0" to represent "No Carton".
+			noneStr := "0"
+			fluxCartonID = &noneStr
 		}
 
-		// Look up the original Flux order by code to get the Flux numeric ID
-		fluxOrders, err := s.fluxClient.GetOrders(ctx)
-		if err != nil {
-			return oops.In("service").Wrapf(err, "fetching flux orders for push")
-		}
-
-		var fluxOrderID int
-		for _, fo := range fluxOrders {
-			if fo.Code == order.Code {
-				fluxOrderID = fo.ID
-				break
-			}
-		}
-
-		if fluxOrderID == 0 {
-			s.logger.Error("could not find flux order ID for code",
-				slog.String("order_code", order.Code),
-			)
-			continue
-		}
-
-		// Push to Flux
+		// Push to Flux using the stored Flux numeric ID for the order
 		req := domain.FluxAssignCartonRequest{
-			OrderID:   fluxOrderID,
+			OrderID:   order.FluxID,
 			CartonID:  fluxCartonID,
 			CreatedBy: s.cfg.CreatedBy,
 		}
@@ -458,6 +438,7 @@ func (s *RecommendationService) doPushRecommendations(ctx context.Context, proce
 		if err != nil {
 			s.logger.Error("failed to push carton assignment",
 				slog.String("order_code", order.Code),
+				slog.Int("flux_order_id", order.FluxID),
 				slog.Any("error", err),
 			)
 			continue

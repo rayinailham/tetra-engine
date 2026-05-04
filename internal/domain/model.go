@@ -26,6 +26,7 @@ const (
 // Order represents an order record in the Tetra database.
 type Order struct {
 	ID            int64      `db:"id"`
+	FluxID        int        `db:"flux_id"`
 	Code          string     `db:"code"`
 	WarehouseID   string     `db:"warehouse_id"`
 	Status        string     `db:"status"`
@@ -60,13 +61,14 @@ type Product struct {
 
 // Carton represents a carton master data record.
 type Carton struct {
-	ID        int64     `db:"id"`
-	Code      string    `db:"code"`
-	Length    int       `db:"length"`     // in millimeters
-	Width     int       `db:"width"`      // in millimeters
-	Height    int       `db:"height"`     // in millimeters
-	MaxWeight int       `db:"max_weight"` // in grams
-	IsActive  bool      `db:"is_active"`
+	ID        int64      `db:"id"`
+	FluxID    int        `db:"flux_id"`
+	Code      string     `db:"code"`
+	Length    int        `db:"length"`     // in millimeters
+	Width     int        `db:"width"`      // in millimeters
+	Height    int        `db:"height"`     // in millimeters
+	MaxWeight int        `db:"max_weight"` // in grams
+	IsActive  bool       `db:"is_active"`
 	SyncedAt  *time.Time `db:"synced_at"`
 	CreatedAt time.Time  `db:"created_at"`
 	UpdatedAt time.Time  `db:"updated_at"`
