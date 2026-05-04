@@ -21,27 +21,27 @@ SYNCED → PENDING → RECOMMENDED → PUSHED
 
 ## Tech Stack
 
-- **Go 1.24+** with modern standard library features
-- **uber-go/fx** — Dependency injection & lifecycle management
-- **spf13/viper** — Configuration from environment variables
-- **sqlx + lib/pq** — PostgreSQL database access
-- **samber/oops** — Structured error handling with stack traces
-- **log/slog** — Structured logging (text/JSON)
+- **Go 1.24+** — Modern, high-performance backend
+- **uber-go/fx** — Compile-time dependency injection & lifecycle management
+- **spf13/viper** — Layered configuration (env, file, defaults)
+- **sqlx + lib/pq** — Optimized PostgreSQL data access
+- **samber/oops** — Structured error handling with full stack traces
+- **log/slog + tint** — Structured logging with colorized, human-friendly terminal output
 - **Vue.js 3 + Vite** — High-end glassmorphism monitoring dashboard
 
 ## Prerequisites
 
-- Go 1.24+
-- PostgreSQL 14+
-- [golang-migrate](https://github.com/golang-migrate/migrate) CLI (for migrations)
+- **Go 1.24+**
+- **PostgreSQL 14+**
+- **golang-migrate CLI** (optional, for manual schema management; migrations are automatic on startup)
 
 ## Features
 
-- **Automated Data Sync** — 4-stage idempotent pipeline for Flux WMS integration.
-- **Volumetric Recommendation** — Optimized algorithm using integer arithmetic (mm/g).
-- **Auto-Migration** — Database schema is automatically applied on startup.
-- **Real-time Monitoring** — Dashboard with smooth robust polling for live updates.
-- **High-End UI** — Premium glassmorphism dashboard built with Vue.js 3.
+- **Zero-Config Sync** — 4-stage idempotent pipeline for seamless Flux WMS integration.
+- **Volumetric Intelligence** — Optimized recommendation algorithm using precise integer arithmetic (mm/g).
+- **Auto-Schema Management** — Database schema is automatically applied and reconciled on startup.
+- **Observability First** — Comprehensive scheduler logs and structured error context for rapid debugging.
+* **Premium Monitoring Dashboard** — Real-time visualization of warehouse throughput and engine health.
 
 ## Quick Start
 
@@ -73,35 +73,36 @@ The monitoring dashboard will be available at `http://localhost:5173`.
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | Health check (DB connectivity) |
+| `GET` | `/health` | Health check (DB connectivity & engine status) |
 | `POST` | `/api/internal/trigger/{job_name}` | Manually trigger a scheduler job |
 | `GET` | `/api/dashboard/stats` | High-level KPI statistics for the dashboard |
-| `GET` | `/api/dashboard/orders` | Recent orders list with sorting support |
-| `GET` | `/api/dashboard/cartons` | Available cartons list |
-| `GET` | `/api/dashboard/logs` | Recent scheduler logs with sorting support |
-| `GET` | `/api/dashboard/engine/status` | Engine running status |
+| `GET` | `/api/dashboard/orders` | Recent orders list with advanced filtering |
+| `GET` | `/api/dashboard/cartons` | Available cartons master data |
+| `GET` | `/api/dashboard/logs` | Comprehensive scheduler execution history |
+| `GET` | `/api/dashboard/engine/status` | Real-time engine running status |
 | `POST` | `/api/dashboard/engine/start` | Start the scheduler engine |
 | `POST` | `/api/dashboard/engine/stop` | Stop the scheduler engine |
-| `POST` | `/api/dashboard/engine/reset` | Stop engine and completely reset the database |
-| `GET` | `/api/dashboard/settings` | Get current engine scheduler intervals |
-| `POST` | `/api/dashboard/settings` | Update engine scheduler intervals |
+| `POST` | `/api/dashboard/engine/reset` | Emergency stop and database reset |
+| `GET` | `/api/dashboard/settings` | Retrieve engine scheduler intervals |
+| `POST` | `/api/dashboard/settings` | Dynamically update scheduler intervals |
 
 **Valid job names:** `order_retrieval`, `carton_sync`, `carton_recommendation`, `carton_push`
 
 ## Project Structure
 
 ```
-cmd/tetra/          — Application entry point (fx wiring)
+cmd/tetra/          — Application entry point (dependency wiring)
 internal/
-  config/           — Configuration loading (viper)
-  domain/           — Domain models (orders, cartons, etc.)
-  database/         — Database connection setup
-  repository/       — Data access layer (sqlx)
-  client/           — Flux WMS HTTP client
-  service/          — Business logic (recommendation engine)
-  scheduler/        — Background job management
-  server/           — HTTP server (health + triggers)
-migrations/         — SQL migration files
+  client/           — Flux WMS API client (resilient HTTP)
+  config/           — Configuration layering (viper)
+  database/         — Database setup & auto-migrations
+  domain/           — Domain models & business logic constants
+  repository/       — High-performance data access (sqlx)
+  scheduler/        — Periodic job orchestration
+  server/           — REST API & Dashboard backend
+  service/          — Core recommendation engine logic
+migrations/         — SQL migration scripts
+web/                — Vue.js 3 monitoring dashboard
 ```
 
 ## Testing
@@ -124,12 +125,14 @@ For each pending order:
    - Carton volume ≥ total item volume
    - Carton max_weight ≥ total item weight
 4. If no suitable carton exists, mark order as `ERROR` (`NO RECOMMENDATION`)
+5. Pushes results back to Flux API using numeric IDs for idempotency.
 
-## Data Refactoring & Optimization
+## Performance Optimization
 
-The Tetra Engine features a highly optimized database schema and data processing layer:
-1. **Integer Arithmetic:** All floating-point dimensions from Flux (cm/kg) are converted to integers (mm/g) before storage. This reduces memory footprint and drastically speeds up the recommendation engine's volumetric calculations.
-2. **SKU Normalization:** Product names are extracted from `order_items` into a normalized `products` table, preventing massive string duplication across thousands of order items.
-3. **Database ENUMs:** Order and scheduler statuses are stored as Postgres ENUMs for optimal space efficiency and strict data integrity.
+The Tetra Engine features a highly optimized data processing layer:
+1. **Integer Precision:** Dimensions from Flux (cm/kg) are normalized to integers (mm/g) before storage. This avoids floating-point inaccuracies and significantly speeds up volumetric calculations.
+2. **Schema Reconciliation:** The engine automatically reconciles database columns on startup, ensuring the latest optimized types are always in use.
+3. **Database ENUMs:** Status fields are implemented as Postgres ENUMs for maximum storage efficiency and strict data integrity.
+4. **Resilient Sync:** Every API and DB operation is wrapped in context-aware timeouts and atomic transactions.
 
-For full details, see [`docs/data-optimization.md`](docs/data-optimization.md).
+For full technical details, see [`docs/technical-review.md`](docs/technical-review.md).
