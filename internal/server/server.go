@@ -52,6 +52,7 @@ func NewServer(
 	mux.HandleFunc("GET /api/dashboard/orders/{id}", corsMiddleware(s.handleDashboardOrderDetail))
 	mux.HandleFunc("GET /api/dashboard/cartons", corsMiddleware(s.handleDashboardCartons))
 	mux.HandleFunc("GET /api/dashboard/logs", corsMiddleware(s.handleDashboardLogs))
+	mux.HandleFunc("GET /api/dashboard/logs/stream", corsMiddleware(s.handleDashboardLogsStream))
 	mux.HandleFunc("GET /api/dashboard/engine/status", corsMiddleware(s.handleEngineStatus))
 	mux.HandleFunc("POST /api/dashboard/engine/start", corsMiddleware(s.handleEngineStart))
 	mux.HandleFunc("POST /api/dashboard/engine/stop", corsMiddleware(s.handleEngineStop))

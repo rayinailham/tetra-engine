@@ -35,6 +35,14 @@ SYNCED → PENDING → RECOMMENDED → PUSHED
 - PostgreSQL 14+
 - [golang-migrate](https://github.com/golang-migrate/migrate) CLI (for migrations)
 
+## Features
+
+- **Automated Data Sync** — 4-stage idempotent pipeline for Flux WMS integration.
+- **Volumetric Recommendation** — Optimized algorithm using integer arithmetic (mm/g).
+- **Auto-Migration** — Database schema is automatically applied on startup.
+- **Real-time Monitoring** — Dashboard with **Server-Sent Events (SSE)** for live log updates.
+- **High-End UI** — Premium glassmorphism dashboard built with Vue.js 3.
+
 ## Quick Start
 
 ```bash
@@ -46,13 +54,9 @@ createdb tetra
 
 # 3. Copy and edit configuration
 cp .env.example .env
-# Edit .env with your database credentials
+# Edit .env with your database credentials (DB_USER, DB_PASSWORD, etc.)
 
-# 4. Run migrations
-export DATABASE_URL="postgres://postgres:postgres@localhost:5432/tetra?sslmode=disable"
-migrate -path migrations -database "$DATABASE_URL" up
-
-# 5. Run the application
+# 4. Run the application (Migrations are automatic!)
 go run ./cmd/tetra
 ```
 
@@ -65,46 +69,22 @@ npm run dev
 ```
 The monitoring dashboard will be available at `http://localhost:5173`.
 
-
-## Configuration
-
-All configuration is via environment variables (or `.env` file):
-
-| Variable | Default | Description |
-|---|---|---|
-| `DB_HOST` | localhost | PostgreSQL host |
-| `DB_PORT` | 5432 | PostgreSQL port |
-| `DB_USER` | postgres | Database user |
-| `DB_PASSWORD` | postgres | Database password |
-| `DB_NAME` | tetra | Database name |
-| `DB_SSLMODE` | disable | SSL mode |
-| `FLUX_BASE_URL` | https://mock-api-anteraja.vercel.app | Flux WMS API URL |
-| `FLUX_TIMEOUT` | 30s | HTTP client timeout |
-| `FLUX_RETRY_MAX` | 3 | Max retry attempts |
-| `SCHEDULER_ORDER_SYNC_INTERVAL` | 15m | Order sync interval |
-| `SCHEDULER_CARTON_SYNC_INTERVAL` | 30m | Carton sync interval |
-| `SCHEDULER_RECOMMENDATION_INTERVAL` | 5m | Recommendation interval |
-| `SCHEDULER_PUSH_INTERVAL` | 5m | Push interval |
-| `HTTP_PORT` | 8080 | HTTP server port |
-| `LOG_LEVEL` | info | Log level (debug/info/warn/error) |
-| `LOG_FORMAT` | text | Log format (text/json) |
-| `CREATED_BY` | [EMAIL_ADDRESS] | Actor for Flux API calls |
-
 ## API Endpoints
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Health check (DB connectivity) |
 | `POST` | `/api/internal/trigger/{job_name}` | Manually trigger a scheduler job |
-| `GET` | `/api/dashboard/stats` | Get high-level KPI statistics for the dashboard |
-| `GET` | `/api/dashboard/orders` | Get recent orders list for the dashboard |
-| `GET` | `/api/dashboard/cartons` | Get available cartons list for the dashboard |
-| `GET` | `/api/dashboard/logs` | Get recent scheduler logs for the dashboard |
-| `GET` | `/api/dashboard/engine/status` | Get current engine running status |
+| `GET` | `/api/dashboard/stats` | High-level KPI statistics for the dashboard |
+| `GET` | `/api/dashboard/orders` | Recent orders list with sorting support |
+| `GET` | `/api/dashboard/cartons` | Available cartons list |
+| `GET` | `/api/dashboard/logs` | Recent scheduler logs with sorting support |
+| `GET` | `/api/dashboard/logs/stream` | **SSE Stream** for real-time log updates |
+| `GET` | `/api/dashboard/engine/status` | Engine running status |
 | `POST` | `/api/dashboard/engine/start` | Start the scheduler engine |
 | `POST` | `/api/dashboard/engine/stop` | Stop the scheduler engine |
 | `POST` | `/api/dashboard/engine/reset` | Stop engine and completely reset the database |
-| `GET` | `/api/dashboard/settings` | Get the current engine scheduler intervals |
+| `GET` | `/api/dashboard/settings` | Get current engine scheduler intervals |
 | `POST` | `/api/dashboard/settings` | Update engine scheduler intervals |
 
 **Valid job names:** `order_retrieval`, `carton_sync`, `carton_recommendation`, `carton_push`

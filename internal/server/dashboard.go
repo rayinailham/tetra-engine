@@ -3,9 +3,11 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -293,15 +295,37 @@ func (s *Server) handleDashboardLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var logs []SchedulerRun
-	err := s.db.SelectContext(ctx, &logs, `
+	// Dynamic sorting
+	sortBy := r.URL.Query().Get("sort_by")
+	order := r.URL.Query().Get("order")
+
+	// Validation to prevent SQL injection
+	allowedSortFields := map[string]string{
+		"started_at":  "started_at",
+		"finished_at": "finished_at",
+	}
+	sortField, ok := allowedSortFields[sortBy]
+	if !ok {
+		sortField = "started_at" // default
+	}
+
+	if strings.ToLower(order) != "asc" {
+		order = "DESC"
+	} else {
+		order = "ASC"
+	}
+
+	query := fmt.Sprintf(`
 		SELECT id, scheduler_name, status,
 		       records_processed, error_message,
 		       TO_CHAR(started_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS started_at,
 		       TO_CHAR(finished_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS finished_at
 		FROM scheduler_logs
-		ORDER BY started_at DESC
-		LIMIT $1`, limit)
+		ORDER BY %s %s
+		LIMIT $1`, sortField, order)
+
+	var logs []SchedulerRun
+	err := s.db.SelectContext(ctx, &logs, query, limit)
 	if err != nil {
 		s.logger.Error("logs query failed", slog.Any("error", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database query failed"})
@@ -313,6 +337,41 @@ func (s *Server) handleDashboardLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, logs)
+}
+
+// handleDashboardLogsStream provides a Server-Sent Events stream for log updates.
+func (s *Server) handleDashboardLogsStream(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	ch, cleanup := s.scheduler.Subscribe()
+	defer cleanup()
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Send initial ping
+	fmt.Fprintf(w, "data: {\"type\":\"connected\"}\n\n")
+	flusher.Flush()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ch:
+			// Notify client to refresh logs
+			fmt.Fprintf(w, "data: {\"type\":\"update\"}\n\n")
+			flusher.Flush()
+		case <-time.After(30 * time.Second):
+			// Keep alive
+			fmt.Fprintf(w, "data: {\"type\":\"ping\"}\n\n")
+			flusher.Flush()
+		}
+	}
 }
 
 // handleEngineStatus returns the current running status of the scheduler engine.

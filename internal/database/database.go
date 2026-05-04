@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -41,5 +42,27 @@ func New(cfg *config.Config, logger *slog.Logger) (*sqlx.DB, error) {
 		slog.String("database", cfg.Database.Name),
 	)
 
+	// Run migrations automatically on startup
+	if err := Migrate(db, logger); err != nil {
+		return nil, fmt.Errorf("running migrations: %w", err)
+	}
+
 	return db, nil
+}
+
+// Migrate runs the schema migrations located in the migrations directory.
+func Migrate(db *sqlx.DB, logger *slog.Logger) error {
+	migrationPath := "migrations/000001_create_tables.up.sql"
+	schema, err := os.ReadFile(migrationPath)
+	if err != nil {
+		return fmt.Errorf("reading migration file %s: %w", migrationPath, err)
+	}
+
+	_, err = db.Exec(string(schema))
+	if err != nil {
+		return fmt.Errorf("executing migration: %w", err)
+	}
+
+	logger.Info("database migrations applied successfully")
+	return nil
 }

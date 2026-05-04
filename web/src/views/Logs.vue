@@ -1,12 +1,14 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 
 const logs = ref([])
 const loading = ref(true)
+const sortBy = ref('started_at')
+const order = ref('desc')
 
 const fetchLogs = async () => {
   try {
-    const res = await fetch('http://localhost:8080/api/dashboard/logs?limit=50')
+    const res = await fetch(`http://localhost:8080/api/dashboard/logs?limit=50&sort_by=${sortBy.value}&order=${order.value}`)
     logs.value = await res.json()
   } catch (e) {
     console.error(e)
@@ -15,10 +17,35 @@ const fetchLogs = async () => {
   }
 }
 
+const setSort = (field) => {
+  if (sortBy.value === field) {
+    order.value = order.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortBy.value = field
+    order.value = 'desc'
+  }
+  fetchLogs()
+}
+
 onMounted(() => {
   fetchLogs()
-  // Auto refresh every 10 seconds
-  setInterval(fetchLogs, 10000)
+
+  // Real-time updates via SSE
+  const eventSource = new EventSource('http://localhost:8080/api/dashboard/logs/stream')
+  eventSource.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      if (data.type === 'update') {
+        fetchLogs()
+      }
+    } catch (e) {
+      console.error('SSE Error:', e)
+    }
+  }
+
+  return () => {
+    eventSource.close()
+  }
 })
 
 const getBadgeClass = (status) => {
@@ -40,8 +67,19 @@ const formatTime = (ts) => {
   <div class="animate-fade-up">
     <div class="eyebrow">Monitoring</div>
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
-      <h1 style="margin: 0;">Scheduler Logs</h1>
-      <div class="subtitle" style="font-size: 0.85rem;">Live update enabled</div>
+      <div>
+        <h1 style="margin: 0;">Scheduler Logs</h1>
+        <p class="subtitle" style="font-size: 0.85rem; margin-top: 0.25rem;">Live update enabled • Sorted by {{ sortBy === 'started_at' ? 'Started At' : 'Finished At' }} ({{ order.toUpperCase() }})</p>
+      </div>
+      
+      <div style="display: flex; gap: 0.5rem;">
+        <button @click="setSort('started_at')" class="btn-primary" :class="{ 'active': sortBy === 'started_at' }" style="font-size: 0.75rem; padding: 0.5rem 1rem;">
+          Sort by Start {{ sortBy === 'started_at' ? (order === 'asc' ? '↑' : '↓') : '' }}
+        </button>
+        <button @click="setSort('finished_at')" class="btn-primary" :class="{ 'active': sortBy === 'finished_at' }" style="font-size: 0.75rem; padding: 0.5rem 1rem;">
+          Sort by Finish {{ sortBy === 'finished_at' ? (order === 'asc' ? '↑' : '↓') : '' }}
+        </button>
+      </div>
     </div>
     
     <div v-if="loading && logs.length === 0" class="subtitle">Loading logs...</div>
@@ -53,9 +91,15 @@ const formatTime = (ts) => {
             <tr>
               <th>Job Name</th>
               <th>Status</th>
-              <th>Records Processed</th>
-              <th>Started At</th>
-              <th>Finished At</th>
+              <th>Records</th>
+              <th @click="setSort('started_at')" style="cursor: pointer; user-select: none;">
+                Started At 
+                <span v-if="sortBy === 'started_at'">{{ order === 'asc' ? '↑' : '↓' }}</span>
+              </th>
+              <th @click="setSort('finished_at')" style="cursor: pointer; user-select: none;">
+                Finished At
+                <span v-if="sortBy === 'finished_at'">{{ order === 'asc' ? '↑' : '↓' }}</span>
+              </th>
               <th>Error</th>
             </tr>
           </thead>
@@ -79,3 +123,11 @@ const formatTime = (ts) => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.active {
+  background: var(--surface-2) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+</style>

@@ -7,9 +7,12 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lmittmann/tint"
 	"go.uber.org/fx"
+	"go.uber.org/fx/fxevent"
 
 	"github.com/anteraja/tetra-engine/internal/client"
 	"github.com/anteraja/tetra-engine/internal/config"
@@ -22,6 +25,11 @@ import (
 
 func main() {
 	fx.New(
+		// Redirect Fx events to slog
+		fx.WithLogger(func(log *slog.Logger) fxevent.Logger {
+			return &fxevent.SlogLogger{Logger: log}
+		}),
+
 		// Configuration
 		fx.Provide(provideConfig),
 		fx.Provide(provideLogger),
@@ -71,17 +79,43 @@ func provideLogger(cfg *config.Config) *slog.Logger {
 		level = slog.LevelInfo
 	}
 
-	opts := &slog.HandlerOptions{
-		Level:     level,
-		AddSource: level == slog.LevelDebug,
-	}
-
 	var handler slog.Handler
 	switch strings.ToLower(cfg.Log.Format) {
 	case "json":
-		handler = slog.NewJSONHandler(os.Stdout, opts)
+		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level:     level,
+			AddSource: level == slog.LevelDebug,
+		})
 	default:
-		handler = slog.NewTextHandler(os.Stdout, opts)
+		// Human-friendly text logs using tint
+		handler = tint.NewHandler(os.Stdout, &tint.Options{
+			Level:      level,
+			TimeFormat: time.Kitchen,
+			AddSource:  level == slog.LevelDebug,
+			NoColor:    false, // Enable color for human readability
+			ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+				// Handle multiline strings (like stacktraces) more cleanly in the terminal
+				if a.Value.Kind() == slog.KindString {
+					val := a.Value.String()
+					if strings.Contains(val, "\n") {
+						// For the terminal, we want to see the newlines
+						// tint preserves newlines if we return the string as is
+						return a
+					}
+				}
+
+				// Simplify Fx event names for human readability
+				if a.Key == "event" {
+					if val, ok := a.Value.Any().(string); ok {
+						if strings.HasPrefix(val, "*fxevent.") {
+							return slog.String(a.Key, strings.TrimPrefix(val, "*fxevent."))
+						}
+					}
+				}
+
+				return a
+			},
+		})
 	}
 
 	logger := slog.New(handler)

@@ -19,11 +19,15 @@ import (
 type Scheduler struct {
 	svc    *service.RecommendationService
 	cfg    *config.Config
-	logger    *slog.Logger
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	mu        sync.Mutex
+	logger *slog.Logger
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	mu     sync.Mutex
 	isRunning bool
+
+	// SSE support
+	subscribers []chan struct{}
+	subMu       sync.Mutex
 }
 
 // NewScheduler creates a new Scheduler and registers lifecycle hooks.
@@ -128,6 +132,43 @@ func (s *Scheduler) Status() bool {
 	return s.isRunning
 }
 
+// Subscribe returns a channel that is signaled whenever a job finishes.
+func (s *Scheduler) Subscribe() (chan struct{}, func()) {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+
+	ch := make(chan struct{}, 1)
+	s.subscribers = append(s.subscribers, ch)
+
+	cleanup := func() {
+		s.subMu.Lock()
+		defer s.subMu.Unlock()
+		for i, sub := range s.subscribers {
+			if sub == ch {
+				s.subscribers = append(s.subscribers[:i], s.subscribers[i+1:]...)
+				close(ch)
+				break
+			}
+		}
+	}
+
+	return ch, cleanup
+}
+
+// Notify signals all subscribers that a job has finished.
+func (s *Scheduler) Notify() {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+
+	for _, ch := range s.subscribers {
+		select {
+		case ch <- struct{}{}:
+		default:
+			// Buffer full, skip
+		}
+	}
+}
+
 // startJob launches a periodic job in a goroutine with panic recovery.
 func (s *Scheduler) startJob(ctx context.Context, name string, interval time.Duration, fn func(ctx context.Context)) {
 	s.wg.Add(1)
@@ -145,6 +186,7 @@ func (s *Scheduler) startJob(ctx context.Context, name string, interval time.Dur
 		// Run immediately on start
 		s.logger.Info("running initial job execution", slog.String("job", name))
 		fn(ctx)
+		s.Notify()
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -157,6 +199,7 @@ func (s *Scheduler) startJob(ctx context.Context, name string, interval time.Dur
 			case <-ticker.C:
 				s.logger.Info("running scheduled job", slog.String("job", name))
 				fn(ctx)
+				s.Notify()
 			}
 		}
 	}()
@@ -166,19 +209,23 @@ func (s *Scheduler) startJob(ctx context.Context, name string, interval time.Dur
 func (s *Scheduler) TriggerJob(ctx context.Context, jobName string) error {
 	s.logger.Info("manually triggering job", slog.String("job", jobName))
 
+	var err error
 	switch jobName {
 	case "order_retrieval":
-		return s.svc.SyncOrders(ctx)
+		err = s.svc.SyncOrders(ctx)
 	case "carton_sync":
-		return s.svc.SyncCartons(ctx)
+		err = s.svc.SyncCartons(ctx)
 	case "carton_recommendation":
-		return s.svc.ProcessRecommendations(ctx)
+		err = s.svc.ProcessRecommendations(ctx)
 	case "carton_push":
-		return s.svc.PushRecommendations(ctx)
+		err = s.svc.PushRecommendations(ctx)
 	default:
 		s.logger.Warn("unknown job name", slog.String("job", jobName))
 		return nil
 	}
+
+	s.Notify()
+	return err
 }
 
 // UpdateIntervals gracefully stops the scheduler, updates the intervals, and restarts it if it was running.

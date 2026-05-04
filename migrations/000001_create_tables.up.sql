@@ -1,8 +1,14 @@
 -- Tetra Engine — Optimized Schema
 -- Creates all tables per architecture-design.md v1.1 with optimized data types
 
-CREATE TYPE order_status AS ENUM ('SYNCED', 'PENDING', 'RECOMMENDED', 'PUSHED', 'NO RECOMMENDATION');
-CREATE TYPE scheduler_status AS ENUM ('RUNNING', 'SUCCESS', 'FAILED');
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'order_status') THEN
+        CREATE TYPE order_status AS ENUM ('SYNCED', 'PENDING', 'RECOMMENDED', 'PUSHED', 'NO RECOMMENDATION');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'scheduler_status') THEN
+        CREATE TYPE scheduler_status AS ENUM ('RUNNING', 'SUCCESS', 'FAILED');
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS cartons (
     id          SERIAL          PRIMARY KEY,
@@ -16,8 +22,8 @@ CREATE TABLE IF NOT EXISTS cartons (
     created_at  TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_cartons_code ON cartons (code);
-CREATE INDEX idx_cartons_is_active ON cartons (is_active);
+CREATE INDEX IF NOT EXISTS idx_cartons_code ON cartons (code);
+CREATE INDEX IF NOT EXISTS idx_cartons_is_active ON cartons (is_active);
 
 CREATE TABLE IF NOT EXISTS orders (
     id              BIGSERIAL       PRIMARY KEY,
@@ -32,9 +38,9 @@ CREATE TABLE IF NOT EXISTS orders (
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_orders_status ON orders (status);
-CREATE INDEX idx_orders_code ON orders (code);
-CREATE INDEX idx_orders_carton_id ON orders (carton_id);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders (status);
+CREATE INDEX IF NOT EXISTS idx_orders_code ON orders (code);
+CREATE INDEX IF NOT EXISTS idx_orders_carton_id ON orders (carton_id);
 
 CREATE TABLE IF NOT EXISTS products (
     sku         VARCHAR(50)     PRIMARY KEY,
@@ -52,8 +58,8 @@ CREATE TABLE IF NOT EXISTS order_items (
     weight      INT             NOT NULL, -- Stored in grams (g)
     created_at  TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_order_items_order_id ON order_items (order_id);
-CREATE INDEX idx_order_items_sku ON order_items (sku);
+CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items (order_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_sku ON order_items (sku);
 
 CREATE TABLE IF NOT EXISTS scheduler_logs (
     id                  BIGSERIAL           PRIMARY KEY,
@@ -64,5 +70,5 @@ CREATE TABLE IF NOT EXISTS scheduler_logs (
     started_at          TIMESTAMPTZ         NOT NULL DEFAULT NOW(),
     finished_at         TIMESTAMPTZ
 );
-CREATE INDEX idx_scheduler_logs_name ON scheduler_logs (scheduler_name);
-CREATE INDEX idx_scheduler_logs_started_at ON scheduler_logs (started_at);
+CREATE INDEX IF NOT EXISTS idx_scheduler_logs_name ON scheduler_logs (scheduler_name);
+CREATE INDEX IF NOT EXISTS idx_scheduler_logs_started_at ON scheduler_logs (started_at);
