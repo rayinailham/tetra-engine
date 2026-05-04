@@ -1,6 +1,6 @@
 # Tetra Recommendation Engine
 
-Package recommendation engine for **Anter Aja** warehouse operations. Tetra automatically syncs orders from **Flux WMS**, calculates the optimal carton for each order based on volume and weight, and pushes recommendations back to Flux.
+Package recommendation engine for **AnterAja** warehouse operations. Tetra automatically syncs orders from **Flux WMS**, calculates the optimal carton for each order based on volume and weight, and pushes recommendations back to Flux.
 
 ## Architecture
 
