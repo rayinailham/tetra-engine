@@ -14,6 +14,11 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+const formatWeight = (g) => {
+  if (!g) return '0 kg'
+  return (g / 1000).toFixed(2).replace(/\.?0+$/, '') + ' kg'
+}
 </script>
 
 <template>
@@ -43,7 +48,7 @@ onMounted(async () => {
             </div>
             <div>
               <div style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.7;">Max Weight</div>
-              <div>{{ carton.max_weight }} g</div>
+              <div>{{ formatWeight(carton.max_weight) }}</div>
             </div>
           </div>
           

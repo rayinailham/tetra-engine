@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 
 const orders = ref([])
 const loading = ref(true)
@@ -12,6 +12,15 @@ const detailsError = ref(null)
 const filterStatus = ref('ALL')
 const filterDate = ref('')
 const filterHour = ref('')
+const filterCarton = ref('ALL')
+
+const filteredOrders = computed(() => {
+  if (filterCarton.value === 'ALL') return orders.value
+  return orders.value.filter(o => {
+    const hasCarton = o.carton_id && o.carton_id !== '-'
+    return filterCarton.value === 'WITH' ? hasCarton : !hasCarton
+  })
+})
 
 watch([filterStatus, filterDate, filterHour], () => {
   loading.value = true
@@ -78,6 +87,11 @@ const formatTime = (ts) => {
   if (!ts) return '-'
   return ts.replace('T', ' ') + ' WIB'
 }
+
+const formatWeight = (g) => {
+  if (!g) return '0 kg'
+  return (g / 1000).toFixed(2).replace(/\.?0+$/, '') + ' kg'
+}
 </script>
 
 <template>
@@ -118,7 +132,17 @@ const formatTime = (ts) => {
           </select>
         </div>
 
-        <button v-if="filterStatus !== 'ALL' || filterDate || filterHour" @click="() => { filterStatus='ALL'; filterDate=''; filterHour='' }" class="btn-clear">
+        <!-- Carton Filter -->
+        <div class="filter-group">
+          <label>Carton</label>
+          <select v-model="filterCarton" class="filter-select">
+            <option value="ALL">All Carton</option>
+            <option value="WITH">With Recommendation</option>
+            <option value="WITHOUT">No Recommendation</option>
+          </select>
+        </div>
+
+        <button v-if="filterStatus !== 'ALL' || filterDate || filterHour || filterCarton !== 'ALL'" @click="() => { filterStatus='ALL'; filterDate=''; filterHour=''; filterCarton='ALL' }" class="btn-clear">
           Reset
         </button>
       </div>
@@ -139,7 +163,7 @@ const formatTime = (ts) => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="order in orders" :key="order.id" @click="viewDetails(order.id)" style="cursor: pointer;" title="Click to view items">
+            <tr v-for="order in filteredOrders" :key="order.id" @click="viewDetails(order.id)" style="cursor: pointer;" title="Click to view items">
               <td style="font-weight: 500; letter-spacing: 0.05em; font-family: monospace; display: flex; align-items: center; gap: 0.5rem;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity: 0.5;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                 {{ order.code }}
@@ -152,7 +176,7 @@ const formatTime = (ts) => {
               <td>{{ order.item_count }}</td>
               <td style="color: var(--text-secondary); font-size: 0.85rem;">{{ formatTime(order.updated_at) }}</td>
             </tr>
-            <tr v-if="orders.length === 0">
+            <tr v-if="filteredOrders.length === 0">
               <td colspan="5" style="text-align: center; color: var(--text-secondary);">No orders found.</td>
             </tr>
           </tbody>
@@ -212,7 +236,7 @@ const formatTime = (ts) => {
                   <td>{{ item.sku_name || '-' }}</td>
                   <td>{{ item.qty }}</td>
                   <td>{{ item.length / 10 }} x {{ item.width / 10 }} x {{ item.height / 10 }} cm</td>
-                  <td>{{ item.weight }} g</td>
+                  <td>{{ formatWeight(item.weight) }}</td>
                 </tr>
                 <tr v-if="selectedOrderItems.length === 0">
                   <td colspan="5" style="text-align: center; color: var(--text-secondary);">No items in this order.</td>
@@ -253,6 +277,14 @@ const formatTime = (ts) => {
 .filter-select:focus, .filter-input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-glow);
+}
+.filter-select option {
+  background: #121212;
+  color: white;
+}
+.filter-input::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  cursor: pointer;
 }
 .btn-clear {
   background: none;
