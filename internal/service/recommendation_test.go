@@ -10,10 +10,10 @@ import (
 
 func TestCalculateOrderDimensions(t *testing.T) {
 	tests := []struct {
-		name        string
-		items       []domain.OrderItem
-		wantVolume  int
-		wantWeight  int
+		name       string
+		items      []domain.OrderItem
+		wantVolume int
+		wantWeight int
 	}{
 		{
 			name:       "empty items",
@@ -60,11 +60,11 @@ func TestCalculateOrderDimensions(t *testing.T) {
 func TestFindBestCarton(t *testing.T) {
 	// Cartons sorted by volume ascending (mm)
 	cartons := []domain.Carton{
-		{ID: 1, Code: "CB01S", Length: 200, Width: 160, Height: 60, MaxWeight: 5000},      // vol=1,920,000
-		{ID: 2, Code: "CB02M", Length: 250, Width: 100, Height: 120, MaxWeight: 8000},     // vol=3,000,000
-		{ID: 3, Code: "CB03L", Length: 250, Width: 180, Height: 150, MaxWeight: 12000},    // vol=6,750,000
-		{ID: 4, Code: "CB06XL1", Length: 290, Width: 210, Height: 100, MaxWeight: 15000},  // vol=6,090,000
-		{ID: 5, Code: "CB05XXL", Length: 400, Width: 220, Height: 100, MaxWeight: 20000},  // vol=8,800,000
+		{ID: 1, Code: "CB01S", Length: 200, Width: 160, Height: 60, MaxWeight: 5000},     // vol=1,920,000
+		{ID: 2, Code: "CB02M", Length: 250, Width: 100, Height: 120, MaxWeight: 8000},    // vol=3,000,000
+		{ID: 3, Code: "CB03L", Length: 250, Width: 180, Height: 150, MaxWeight: 12000},   // vol=6,750,000
+		{ID: 4, Code: "CB06XL1", Length: 290, Width: 210, Height: 100, MaxWeight: 15000}, // vol=6,090,000
+		{ID: 5, Code: "CB05XXL", Length: 400, Width: 220, Height: 100, MaxWeight: 20000}, // vol=8,800,000
 	}
 
 	tests := []struct {
@@ -94,9 +94,9 @@ func TestFindBestCarton(t *testing.T) {
 			wantCode: "CB01S",
 		},
 		{
-			name:     "item too heavy for any carton",
-			items:    []domain.OrderItem{{Length: 10, Width: 10, Height: 10, Weight: 50000, Qty: 1}},
-			wantNil:  true,
+			name:    "item too heavy for any carton",
+			items:   []domain.OrderItem{{Length: 10, Width: 10, Height: 10, Weight: 50000, Qty: 1}},
+			wantNil: true,
 		},
 		{
 			name:     "volume fits but dimensions require a larger carton",

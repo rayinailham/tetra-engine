@@ -77,14 +77,4 @@ Recommendation: Start with these defaults in staging, observe `job_duration_seco
 
 The original architecture prioritized correctness and clarity; these targeted improvements materially increase operational safety (timeouts and outbox), scalability (cursor batching), recommendation quality (dimension-aware carton selection), and observability (Prometheus metrics). Together they transform the engine from a functional prototype into a reliable service suitable for production deployment under realistic warehouse loads.
 
-## **Appendix — Key Files Changed**
-
-- `internal/scheduler/scheduler.go` — job timeouts & leader gating
-- `internal/service/recommendation.go` — paginated processing, per-record timeouts, dimension-aware carton recommendation, outbox enqueue/delivery
-- `internal/repository/outbox.go` — outbox persistence and delivery helpers
-- `internal/repository/scheduler_lock.go` — leader lease implementation
-- `internal/observability/metrics.go` — Prometheus metrics
-- `migrations/000001_create_tables.*.sql` — new schema objects
-
-
 **Status:** `docs/technical-review.md` updated and ready to share.
