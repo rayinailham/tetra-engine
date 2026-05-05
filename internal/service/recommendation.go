@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"math/rand"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -473,7 +474,7 @@ func (s *RecommendationService) processRecommendationOrder(ctx context.Context, 
 	}
 
 	totalVolume, totalWeight := CalculateOrderDimensions(items)
-	carton := FindBestCarton(cartons, totalVolume, totalWeight)
+	carton := FindBestCarton(cartons, items)
 	if carton == nil {
 		s.logger.Warn("no suitable carton found for order",
 			slog.Int64("order_id", order.ID),
@@ -742,18 +743,50 @@ func CalculateOrderDimensions(items []domain.OrderItem) (totalVolume int, totalW
 	return totalVolume, totalWeight
 }
 
-// FindBestCarton selects the smallest carton that can hold the given volume and weight.
+// FindBestCarton selects the smallest carton that can hold the order volume, weight,
+// and each item's dimensions in at least one orientation.
 // Cartons must be pre-sorted by volume ascending.
 // Returns nil if no suitable carton is found.
-func FindBestCarton(cartons []domain.Carton, totalVolume int, totalWeight int) *domain.Carton {
-	for i := range cartons {
-		cartonVolume := cartons[i].Volume()
+func FindBestCarton(cartons []domain.Carton, items []domain.OrderItem) *domain.Carton {
+	totalVolume, totalWeight := CalculateOrderDimensions(items)
 
-		if cartonVolume >= totalVolume && cartons[i].MaxWeight >= totalWeight {
+	for i := range cartons {
+		carton := cartons[i]
+		if carton.Volume() < totalVolume || carton.MaxWeight < totalWeight {
+			continue
+		}
+
+		fitsAllItems := true
+		for _, item := range items {
+			if !itemFitsCarton(item, carton) {
+				fitsAllItems = false
+				break
+			}
+		}
+
+		if fitsAllItems {
 			return &cartons[i]
 		}
 	}
+
 	return nil
+}
+
+// itemFitsCarton reports whether the item can fit inside the carton in any rotation.
+func itemFitsCarton(item domain.OrderItem, carton domain.Carton) bool {
+	itemDims := [3]int{item.Length, item.Width, item.Height}
+	cartonDims := [3]int{carton.Length, carton.Width, carton.Height}
+
+	sort.Ints(itemDims[:])
+	sort.Ints(cartonDims[:])
+
+	for i := range itemDims {
+		if itemDims[i] > cartonDims[i] {
+			return false
+		}
+	}
+
+	return true
 }
 
 func parseDecimalToScaledInt(raw string, scale int) (int, error) {

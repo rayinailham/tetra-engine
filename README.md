@@ -1,6 +1,6 @@
 # Tetra Recommendation Engine
 
-Package recommendation engine for **AnterAja** warehouse operations. Tetra automatically syncs orders from **Flux WMS**, calculates the optimal carton for each order based on volume and weight, and pushes recommendations back to Flux.
+Package recommendation engine for **AnterAja** warehouse operations. Tetra automatically syncs orders from **Flux WMS**, calculates the optimal carton for each order based on volume, weight, and per-item fit checks, and pushes recommendations back to Flux.
 
 ## Architecture
 
@@ -38,7 +38,7 @@ SYNCED → PENDING → RECOMMENDED → PUSHED
 ## Features
 
 - **Zero-Config Sync** — 4-stage idempotent pipeline for seamless Flux WMS integration.
-- **Volumetric Intelligence** — Optimized recommendation algorithm using precise integer arithmetic (mm/g).
+- **Dimension-Aware Intelligence** — Optimized recommendation algorithm using precise integer arithmetic (mm/g) plus per-item carton fit checks.
 - **Auto-Schema Management** — Database schema is automatically applied and reconciled on startup.
 - **Observability First** — Comprehensive scheduler logs and structured error context for rapid debugging.
 * **Premium Monitoring Dashboard** — Real-time visualization of warehouse throughput and engine health.
@@ -169,11 +169,15 @@ go tool cover -html=coverage.out
 For each pending order:
 1. Calculate total **volume** = Σ (length × width × height × qty) per item (in mm³)
 2. Calculate total **weight** = Σ (weight × qty) per item (in grams)
-3. Select the **smallest carton** where:
-   - Carton volume ≥ total item volume
-   - Carton max_weight ≥ total item weight
-4. If no suitable carton exists, mark order as `ERROR` (`NO RECOMMENDATION`)
-5. Pushes results back to Flux API using numeric IDs for idempotency.
+3. Sort active cartons by volume ascending and evaluate them from smallest to largest.
+4. Select the **smallest carton** where:
+  - Carton volume ≥ total item volume
+  - Carton max_weight ≥ total item weight
+  - Every item fits within the carton dimensions in at least one orientation
+5. If no suitable carton exists, mark order as `ERROR` (`NO RECOMMENDATION`)
+6. Push results back to Flux API using numeric IDs for idempotency.
+
+This is a practical heuristic, not a full 3D bin-packing solver. It is designed to be fast, deterministic, and safe using only the data available in Flux and Tetra.
 
 ## Performance Optimization
 

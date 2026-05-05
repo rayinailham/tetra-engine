@@ -64,50 +64,50 @@ func TestFindBestCarton(t *testing.T) {
 		{ID: 2, Code: "CB02M", Length: 250, Width: 100, Height: 120, MaxWeight: 8000},     // vol=3,000,000
 		{ID: 3, Code: "CB03L", Length: 250, Width: 180, Height: 150, MaxWeight: 12000},    // vol=6,750,000
 		{ID: 4, Code: "CB06XL1", Length: 290, Width: 210, Height: 100, MaxWeight: 15000},  // vol=6,090,000
+		{ID: 5, Code: "CB05XXL", Length: 400, Width: 220, Height: 100, MaxWeight: 20000},  // vol=8,800,000
 	}
 
 	tests := []struct {
 		name     string
-		volume   int
-		weight   int
+		items    []domain.OrderItem
 		wantCode string
 		wantNil  bool
 	}{
 		{
 			name:     "small item fits in smallest carton",
-			volume:   360000,
-			weight:   500,
+			items:    []domain.OrderItem{{Length: 150, Width: 80, Height: 30, Weight: 500, Qty: 1}},
 			wantCode: "CB01S",
 		},
 		{
 			name:     "medium item needs CB02M",
-			volume:   2000000,
-			weight:   2000,
+			items:    []domain.OrderItem{{Length: 100, Width: 100, Height: 100, Weight: 1000, Qty: 2}},
 			wantCode: "CB02M",
 		},
 		{
 			name:     "volume fits CB01S but weight exceeds — needs bigger carton",
-			volume:   500000,
-			weight:   6000,
+			items:    []domain.OrderItem{{Length: 120, Width: 80, Height: 50, Weight: 3000, Qty: 2}},
 			wantCode: "CB02M",
 		},
 		{
 			name:     "exact fit on volume boundary",
-			volume:   1920000,
-			weight:   5000,
+			items:    []domain.OrderItem{{Length: 200, Width: 160, Height: 60, Weight: 5000, Qty: 1}},
 			wantCode: "CB01S",
 		},
 		{
 			name:     "item too heavy for any carton",
-			volume:   100,
-			weight:   50000,
+			items:    []domain.OrderItem{{Length: 10, Width: 10, Height: 10, Weight: 50000, Qty: 1}},
 			wantNil:  true,
+		},
+		{
+			name:     "volume fits but dimensions require a larger carton",
+			items:    []domain.OrderItem{{Length: 300, Width: 100, Height: 20, Weight: 1000, Qty: 1}},
+			wantCode: "CB05XXL",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FindBestCarton(cartons, tt.volume, tt.weight)
+			result := FindBestCarton(cartons, tt.items)
 
 			if tt.wantNil {
 				assert.Nil(t, result, "expected no suitable carton")

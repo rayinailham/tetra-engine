@@ -6,6 +6,7 @@ This technical review summarizes the reliability, scalability, and operational i
 ## **Executive Summary**
 - Implemented cursor-based batching for recommendation processing to avoid loading all `PENDING` orders into memory.
 - Added per-job and per-record timeouts to isolate slow external calls and avoid scheduler stalls.
+- Improved carton recommendation to check per-item carton fit in addition to total volume and weight, reducing false-positive carton assignments.
 - Implemented an outbox pattern for reliable push delivery with transactional enqueue and idempotent delivery semantics plus retry/backoff.
 - Added Prometheus metrics and exposed `/metrics` for operational monitoring and SLO alerting.
 - Added a DB-backed leader lease (`scheduler_leader`) so only one instance runs scheduled jobs at a time.
@@ -19,6 +20,10 @@ These changes significantly reduce tail latency risk, decrease memory footprint 
 
 **Timeouts & Isolation**
 - Scheduler jobs are wrapped with a configurable `scheduler.job_timeout`. Individual record processing uses `scheduler.record_timeout` to prevent a single external call from blocking other work.
+
+**Recommendation Heuristic**
+- The carton selector now combines total order volume, total weight, and per-item dimension fit checks (with carton orientation normalization). This keeps the logic deterministic while avoiding obvious misfits that would pass a volume-only check.
+- The implementation remains a heuristic, not a full 3D bin-packing solver; it uses only the data that exists in Flux and Tetra.
 
 **Reliable Push (Outbox)**
 - Push intents are persisted in `push_outbox` via a transactional `EnqueuePushIntent` before any network activity.
@@ -70,12 +75,12 @@ Recommendation: Start with these defaults in staging, observe `job_duration_seco
 
 ## **Why this exceeds expectations**
 
-The original architecture prioritized correctness and clarity; these targeted improvements materially increase operational safety (timeouts and outbox), scalability (cursor batching), and observability (Prometheus metrics). Together they transform the engine from a functional prototype into a reliable service suitable for production deployment under realistic warehouse loads.
+The original architecture prioritized correctness and clarity; these targeted improvements materially increase operational safety (timeouts and outbox), scalability (cursor batching), recommendation quality (dimension-aware carton selection), and observability (Prometheus metrics). Together they transform the engine from a functional prototype into a reliable service suitable for production deployment under realistic warehouse loads.
 
 ## **Appendix — Key Files Changed**
 
 - `internal/scheduler/scheduler.go` — job timeouts & leader gating
-- `internal/service/recommendation.go` — paginated processing, per-record timeouts, outbox enqueue/delivery
+- `internal/service/recommendation.go` — paginated processing, per-record timeouts, dimension-aware carton recommendation, outbox enqueue/delivery
 - `internal/repository/outbox.go` — outbox persistence and delivery helpers
 - `internal/repository/scheduler_lock.go` — leader lease implementation
 - `internal/observability/metrics.go` — Prometheus metrics
