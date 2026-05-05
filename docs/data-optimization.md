@@ -67,3 +67,54 @@ During the order detail sync from Flux, the backend groups products and performs
 ### Why?
 - **Space Efficiency:** ENUMs are stored internally as 4-byte integers rather than raw string bytes.
 - **Data Integrity:** The database natively rejects invalid status strings without needing complex triggers or backend validation.
+
+## 5. Operational Tables (Reliability & Distributed Coordination)
+
+### New Tables Added (as of 2026-05-05)
+
+**5.1 `push_outbox` — Reliable Push Delivery**
+- **Purpose:** Ensures every recommendation push to Flux is delivered exactly-once, even under transient network failures.
+- **Schema:**
+  - `id` (BIGSERIAL PRIMARY KEY)
+  - `order_id` (BIGINT, FK to orders)
+  - `payload` (JSONB): Serialized carton assignment payload
+  - `status` (push_outbox_status ENUM): PENDING, RETRY, DELIVERED
+  - `retry_count` (INT): Tracks delivery attempts
+  - `retry_after` (TIMESTAMP): Next eligible retry time (exponential backoff with jitter)
+  - `created_at`, `updated_at` (TIMESTAMP)
+
+- **How It Works:**
+  1. When the recommendation job completes, it enqueues all push intents into `push_outbox` in a single transaction (before any network calls).
+  2. A dedicated delivery loop claims pending rows and attempts delivery to the Flux API.
+  3. On success, the row is marked `DELIVERED` and the order status is atomically updated.
+  4. On transient failure, the row is marked `RETRY` with an updated `retry_after` time (exponential backoff).
+  5. Stale `RETRY` rows are reattempted periodically, guaranteeing eventual delivery.
+
+- **Why:**
+  - **Resilience:** Network failures between Tetra and Flux no longer result in lost recommendations.
+  - **Idempotency:** The Flux API can receive duplicate requests without data corruption (idempotent from the DB side).
+
+**5.2 `scheduler_leader` — Single-Leader Coordination**
+- **Purpose:** Ensures only one scheduler instance runs jobs in a multi-instance deployment.
+- **Schema:**
+  - `leader_id` (UUID PRIMARY KEY): Unique instance identifier
+  - `job_name` (VARCHAR): Name of the scheduled job
+  - `lease_until` (TIMESTAMP): Expiration time of the lease
+  - `updated_at` (TIMESTAMP): Last renewal time
+
+- **How It Works:**
+  1. Each scheduler instance has a unique `instance_id` (UUID).
+  2. On each tick, the scheduler attempts `TryAcquireOrRenew(instanceId, jobName)`:
+     - If no record exists → insert and acquire the lease.
+     - If the record exists and `lease_until < NOW()` → update to acquire (lease expired).
+     - If the record exists and the current holder → renew the lease.
+     - Otherwise → skip the job (another instance holds the active lease).
+  3. Only the holder of the lease executes the scheduled job for that tick.
+  4. Leases auto-expire (default 15 seconds), allowing failover if an instance crashes.
+
+- **Why:**
+  - **Safety:** Prevents duplicate job execution in HA setups (multiple instance running same scheduler).
+  - **Simplicity:** DB-based coordination avoids external consensus systems (etcd, Consul, etc.).
+
+### Schema Evolution Strategy
+All schema changes are reconciled at application startup via the `ReconcileQuery` in `database.go`. If tables or ENUMs are missing, they are created automatically, ensuring zero-downtime deployments across schema versions.
