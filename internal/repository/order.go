@@ -121,6 +121,24 @@ func (r *OrderRepository) GetOrdersByStatus(ctx context.Context, status string) 
 	return orders, nil
 }
 
+// GetOrdersByStatusAfterID retrieves a stable ordered page of orders by status.
+func (r *OrderRepository) GetOrdersByStatusAfterID(ctx context.Context, status string, lastID int64, limit int) ([]domain.Order, error) {
+	var orders []domain.Order
+	err := r.db.SelectContext(ctx, &orders,
+		"SELECT * FROM orders WHERE status = $1 AND id > $2 ORDER BY id ASC LIMIT $3",
+		status, lastID, limit)
+	if err != nil {
+		return nil, oops.
+			In("order-repository").
+			With("status", status).
+			With("last_id", lastID).
+			With("limit", limit).
+			Wrapf(err, "querying paginated orders by status")
+	}
+
+	return orders, nil
+}
+
 // GetOrdersByStatuses retrieves all orders with any of the given statuses.
 func (r *OrderRepository) GetOrdersByStatuses(ctx context.Context, statuses []string) ([]domain.Order, error) {
 	if len(statuses) == 0 {
@@ -137,6 +155,30 @@ func (r *OrderRepository) GetOrdersByStatuses(ctx context.Context, statuses []st
 	if err != nil {
 		return nil, oops.In("order-repository").Wrapf(err, "querying orders by statuses")
 	}
+	return orders, nil
+}
+
+// GetOrdersByStatusesAfterID retrieves a stable ordered page for multiple statuses.
+func (r *OrderRepository) GetOrdersByStatusesAfterID(ctx context.Context, statuses []string, lastID int64, limit int) ([]domain.Order, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+
+	query, args, err := sqlx.In(
+		"SELECT * FROM orders WHERE status IN (?) AND id > ? ORDER BY id ASC LIMIT ?",
+		statuses, lastID, limit,
+	)
+	if err != nil {
+		return nil, oops.In("order-repository").Wrapf(err, "building paginated statuses IN query")
+	}
+	query = r.db.Rebind(query)
+
+	var orders []domain.Order
+	err = r.db.SelectContext(ctx, &orders, query, args...)
+	if err != nil {
+		return nil, oops.In("order-repository").Wrapf(err, "querying paginated orders by statuses")
+	}
+
 	return orders, nil
 }
 
@@ -239,5 +281,16 @@ func (r *OrderRepository) MarkSyncedAsPending(ctx context.Context) (int64, error
 	if err != nil {
 		return 0, oops.In("order-repository").Wrapf(err, "getting rows affected")
 	}
+	return count, nil
+}
+
+// CountByStatus returns the number of orders in a specific status.
+func (r *OrderRepository) CountByStatus(ctx context.Context, status string) (int, error) {
+	var count int
+	err := r.db.GetContext(ctx, &count, "SELECT COUNT(*) FROM orders WHERE status = $1", status)
+	if err != nil {
+		return 0, oops.In("order-repository").With("status", status).Wrapf(err, "counting orders by status")
+	}
+
 	return count, nil
 }

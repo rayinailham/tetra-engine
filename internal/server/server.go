@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/fx"
 
 	"github.com/anteraja/tetra-engine/internal/config"
@@ -44,6 +45,7 @@ func NewServer(
 
 	// Register routes
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.Handle("GET /metrics", promhttp.Handler())
 	mux.HandleFunc("POST /api/internal/trigger/{job_name}", corsMiddleware(s.handleTrigger))
 
 	// Dashboard API routes (CORS-enabled for local Vue frontend)
@@ -104,10 +106,10 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	validJobs := map[string]bool{
-		"order_retrieval":      true,
-		"carton_sync":          true,
+		"order_retrieval":       true,
+		"carton_sync":           true,
 		"carton_recommendation": true,
-		"carton_push":          true,
+		"carton_push":           true,
 	}
 
 	if !validJobs[jobName] {

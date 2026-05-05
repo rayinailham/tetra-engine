@@ -8,6 +8,9 @@ DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'scheduler_status') THEN
         CREATE TYPE scheduler_status AS ENUM ('RUNNING', 'SUCCESS', 'FAILED');
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'push_outbox_status') THEN
+        CREATE TYPE push_outbox_status AS ENUM ('PENDING', 'RETRY', 'DELIVERED');
+    END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS cartons (
@@ -75,3 +78,26 @@ CREATE TABLE IF NOT EXISTS scheduler_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_scheduler_logs_name ON scheduler_logs (scheduler_name);
 CREATE INDEX IF NOT EXISTS idx_scheduler_logs_started_at ON scheduler_logs (started_at);
+
+CREATE TABLE IF NOT EXISTS push_outbox (
+    id              BIGSERIAL           PRIMARY KEY,
+    order_id        BIGINT              NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+    flux_order_id   INT                 NOT NULL,
+    flux_carton_id  VARCHAR(50),
+    created_by      VARCHAR(255)        NOT NULL,
+    status          push_outbox_status  NOT NULL DEFAULT 'PENDING',
+    attempt_count   INT                 NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    next_attempt_at TIMESTAMPTZ         NOT NULL DEFAULT NOW(),
+    delivered_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ         NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ         NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_push_outbox_status_next_attempt_at ON push_outbox (status, next_attempt_at);
+
+CREATE TABLE IF NOT EXISTS scheduler_leader (
+    id          SMALLINT    PRIMARY KEY CHECK (id = 1),
+    leader_id   VARCHAR(255) NOT NULL,
+    lease_until TIMESTAMPTZ  NOT NULL,
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);

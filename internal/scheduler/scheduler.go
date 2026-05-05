@@ -13,17 +13,21 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/anteraja/tetra-engine/internal/config"
+	"github.com/anteraja/tetra-engine/internal/observability"
+	"github.com/anteraja/tetra-engine/internal/repository"
 	"github.com/anteraja/tetra-engine/internal/service"
 )
 
 // Scheduler runs periodic background jobs.
 type Scheduler struct {
-	svc    *service.RecommendationService
-	cfg    *config.Config
-	logger *slog.Logger
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	mu     sync.Mutex
+	svc       *service.RecommendationService
+	lockRepo  *repository.SchedulerLockRepository
+	cfg       *config.Config
+	metrics   *observability.Metrics
+	logger    *slog.Logger
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	mu        sync.Mutex
 	isRunning bool
 }
 
@@ -33,13 +37,17 @@ const minSchedulerInterval = 5 * time.Second
 func NewScheduler(
 	lc fx.Lifecycle,
 	svc *service.RecommendationService,
+	lockRepo *repository.SchedulerLockRepository,
 	cfg *config.Config,
+	metrics *observability.Metrics,
 	logger *slog.Logger,
 ) *Scheduler {
 	s := &Scheduler{
-		svc:    svc,
-		cfg:    cfg,
-		logger: logger.With(slog.String("component", "scheduler")),
+		svc:      svc,
+		lockRepo: lockRepo,
+		cfg:      cfg,
+		metrics:  metrics,
+		logger:   logger.With(slog.String("component", "scheduler")),
 	}
 
 	lc.Append(fx.Hook{
@@ -71,68 +79,33 @@ func (s *Scheduler) Start() {
 	s.isRunning = true
 
 	s.logger.Info("starting schedulers",
+		slog.String("instance_id", s.lockRepo.InstanceID()),
 		slog.Duration("order_sync", s.cfg.Scheduler.OrderSyncInterval),
 		slog.Duration("carton_sync", s.cfg.Scheduler.CartonSyncInterval),
 		slog.Duration("recommendation", s.cfg.Scheduler.RecommendationInterval),
 		slog.Duration("push", s.cfg.Scheduler.PushInterval),
+		slog.Duration("job_timeout", s.cfg.Scheduler.JobTimeout),
+		slog.Duration("leader_lease_duration", s.cfg.Scheduler.LeaderLeaseDuration),
 	)
 
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		
+
 		s.logger.Info("starting initial sequential execution")
 
-		// 1. Carton Sync
-		s.logger.Info("running initial job execution", slog.String("job", "carton_sync"))
-		if err := s.svc.SyncCartons(ctx); err != nil {
-			s.logger.Error("carton sync failed", slog.Any("error", err))
-		}
-
-		// 2. Order Retrieval
-		s.logger.Info("running initial job execution", slog.String("job", "order_retrieval"))
-		if err := s.svc.SyncOrders(ctx); err != nil {
-			s.logger.Error("order sync failed", slog.Any("error", err))
-		}
-
-		// 3. Recommendation
-		s.logger.Info("running initial job execution", slog.String("job", "carton_recommendation"))
-		if err := s.svc.ProcessRecommendations(ctx); err != nil {
-			s.logger.Error("recommendation processing failed", slog.Any("error", err))
-		}
-
-		// 4. Push
-		s.logger.Info("running initial job execution", slog.String("job", "carton_push"))
-		if err := s.svc.PushRecommendations(ctx); err != nil {
-			s.logger.Error("carton push failed", slog.Any("error", err))
-		}
+		s.runManagedJob(ctx, "carton_sync", s.svc.SyncCartons)
+		s.runManagedJob(ctx, "order_retrieval", s.svc.SyncOrders)
+		s.runManagedJob(ctx, "carton_recommendation", s.svc.ProcessRecommendations)
+		s.runManagedJob(ctx, "carton_push", s.svc.PushRecommendations)
 
 		s.logger.Info("initial sequential execution complete, starting periodic jobs")
 
 		// Now start the periodic tickers
-		s.startJob(ctx, "carton_sync", s.cfg.Scheduler.CartonSyncInterval, func(ctx context.Context) {
-			if err := s.svc.SyncCartons(ctx); err != nil {
-				s.logger.Error("carton sync failed", slog.Any("error", err))
-			}
-		})
-
-		s.startJob(ctx, "order_retrieval", s.cfg.Scheduler.OrderSyncInterval, func(ctx context.Context) {
-			if err := s.svc.SyncOrders(ctx); err != nil {
-				s.logger.Error("order sync failed", slog.Any("error", err))
-			}
-		})
-
-		s.startJob(ctx, "carton_recommendation", s.cfg.Scheduler.RecommendationInterval, func(ctx context.Context) {
-			if err := s.svc.ProcessRecommendations(ctx); err != nil {
-				s.logger.Error("recommendation processing failed", slog.Any("error", err))
-			}
-		})
-
-		s.startJob(ctx, "carton_push", s.cfg.Scheduler.PushInterval, func(ctx context.Context) {
-			if err := s.svc.PushRecommendations(ctx); err != nil {
-				s.logger.Error("carton push failed", slog.Any("error", err))
-			}
-		})
+		s.startJob(ctx, "carton_sync", s.cfg.Scheduler.CartonSyncInterval, s.svc.SyncCartons)
+		s.startJob(ctx, "order_retrieval", s.cfg.Scheduler.OrderSyncInterval, s.svc.SyncOrders)
+		s.startJob(ctx, "carton_recommendation", s.cfg.Scheduler.RecommendationInterval, s.svc.ProcessRecommendations)
+		s.startJob(ctx, "carton_push", s.cfg.Scheduler.PushInterval, s.svc.PushRecommendations)
 	}()
 }
 
@@ -162,7 +135,7 @@ func (s *Scheduler) Status() bool {
 }
 
 // startJob launches a periodic job in a goroutine with panic recovery.
-func (s *Scheduler) startJob(ctx context.Context, name string, interval time.Duration, fn func(ctx context.Context)) {
+func (s *Scheduler) startJob(ctx context.Context, name string, interval time.Duration, fn func(ctx context.Context) error) {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -184,33 +157,60 @@ func (s *Scheduler) startJob(ctx context.Context, name string, interval time.Dur
 				s.logger.Info("scheduler job stopped", slog.String("job", name))
 				return
 			case <-ticker.C:
-				s.logger.Info("running scheduled job", slog.String("job", name))
-				fn(ctx)
+				s.runManagedJob(ctx, name, fn)
 			}
 		}
 	}()
+}
+
+func (s *Scheduler) runManagedJob(ctx context.Context, name string, fn func(ctx context.Context) error) {
+	s.logger.Info("running scheduled job", slog.String("job", name))
+
+	leaderCtx, leaderCancel := context.WithTimeout(ctx, 2*time.Second)
+	isLeader, lockErr := s.lockRepo.TryAcquireOrRenew(leaderCtx, s.cfg.Scheduler.LeaderLeaseDuration)
+	leaderCancel()
+	if lockErr != nil {
+		s.metrics.IncJobFailure(name)
+		s.logger.Error("leader lease check failed", slog.String("job", name), slog.Any("error", lockErr))
+		return
+	}
+
+	if !isLeader {
+		s.logger.Debug("skipping scheduled job on standby instance", slog.String("job", name))
+		return
+	}
+
+	start := time.Now()
+	jobCtx, cancel := context.WithTimeout(ctx, s.cfg.Scheduler.JobTimeout)
+	err := fn(jobCtx)
+	cancel()
+
+	s.metrics.ObserveJobDuration(name, time.Since(start))
+	if err != nil {
+		s.metrics.IncJobFailure(name)
+		s.logger.Error("scheduler job failed", slog.String("job", name), slog.Any("error", err))
+	}
 }
 
 // TriggerJob manually triggers a scheduler job by name.
 func (s *Scheduler) TriggerJob(ctx context.Context, jobName string) error {
 	s.logger.Info("manually triggering job", slog.String("job", jobName))
 
-	var err error
 	switch jobName {
 	case "order_retrieval":
-		err = s.svc.SyncOrders(ctx)
+		s.runManagedJob(ctx, jobName, s.svc.SyncOrders)
 	case "carton_sync":
-		err = s.svc.SyncCartons(ctx)
+		s.runManagedJob(ctx, jobName, s.svc.SyncCartons)
 	case "carton_recommendation":
-		err = s.svc.ProcessRecommendations(ctx)
+		s.runManagedJob(ctx, jobName, s.svc.ProcessRecommendations)
 	case "carton_push":
-		err = s.svc.PushRecommendations(ctx)
+		s.runManagedJob(ctx, jobName, s.svc.PushRecommendations)
 	default:
 		s.logger.Warn("unknown job name", slog.String("job", jobName))
 		return fmt.Errorf("unknown job name: %s", jobName)
 	}
 
-	return err
+	return nil
 }
 
 // UpdateIntervals gracefully stops the scheduler, updates the intervals, and restarts it if it was running.
@@ -249,8 +249,8 @@ func (s *Scheduler) GetIntervals() (time.Duration, time.Duration, time.Duration,
 
 func validateIntervals(order, carton, rec, push time.Duration) error {
 	intervals := map[string]time.Duration{
-		"order_sync_interval":      order,
-		"carton_sync_interval":     carton,
+		"order_sync_interval":     order,
+		"carton_sync_interval":    carton,
 		"recommendation_interval": rec,
 		"push_interval":           push,
 	}

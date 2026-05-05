@@ -49,10 +49,15 @@ type FluxConfig struct {
 
 // SchedulerConfig holds scheduler interval configuration.
 type SchedulerConfig struct {
-	OrderSyncInterval      time.Duration `mapstructure:"order_sync_interval"`
-	CartonSyncInterval     time.Duration `mapstructure:"carton_sync_interval"`
-	RecommendationInterval time.Duration `mapstructure:"recommendation_interval"`
-	PushInterval           time.Duration `mapstructure:"push_interval"`
+	OrderSyncInterval       time.Duration `mapstructure:"order_sync_interval"`
+	CartonSyncInterval      time.Duration `mapstructure:"carton_sync_interval"`
+	RecommendationInterval  time.Duration `mapstructure:"recommendation_interval"`
+	PushInterval            time.Duration `mapstructure:"push_interval"`
+	JobTimeout              time.Duration `mapstructure:"job_timeout"`
+	RecordTimeout           time.Duration `mapstructure:"record_timeout"`
+	RecommendationBatchSize int           `mapstructure:"recommendation_batch_size"`
+	PushBatchSize           int           `mapstructure:"push_batch_size"`
+	LeaderLeaseDuration     time.Duration `mapstructure:"leader_lease_duration"`
 }
 
 // HTTPConfig holds HTTP server configuration.
@@ -89,6 +94,11 @@ func Load() (*Config, error) {
 	v.SetDefault("scheduler.carton_sync_interval", "30m")
 	v.SetDefault("scheduler.recommendation_interval", "5m")
 	v.SetDefault("scheduler.push_interval", "5m")
+	v.SetDefault("scheduler.job_timeout", "2m")
+	v.SetDefault("scheduler.record_timeout", "10s")
+	v.SetDefault("scheduler.recommendation_batch_size", 500)
+	v.SetDefault("scheduler.push_batch_size", 500)
+	v.SetDefault("scheduler.leader_lease_duration", "30s")
 
 	v.SetDefault("http.port", 8080)
 
@@ -99,7 +109,7 @@ func Load() (*Config, error) {
 
 	// Environment variable binding
 	v.AutomaticEnv()
-	
+
 	// Map flat ENV keys to nested struct keys
 	v.BindEnv("db.host", "DB_HOST")
 	v.BindEnv("db.port", "DB_PORT")
@@ -107,16 +117,21 @@ func Load() (*Config, error) {
 	v.BindEnv("db.password", "DB_PASSWORD")
 	v.BindEnv("db.name", "DB_NAME")
 	v.BindEnv("db.sslmode", "DB_SSLMODE")
-	
+
 	v.BindEnv("flux.base_url", "FLUX_BASE_URL")
 	v.BindEnv("flux.timeout", "FLUX_TIMEOUT")
 	v.BindEnv("flux.retry_max", "FLUX_RETRY_MAX")
-	
+
 	v.BindEnv("scheduler.order_sync_interval", "SCHEDULER_ORDER_SYNC_INTERVAL")
 	v.BindEnv("scheduler.carton_sync_interval", "SCHEDULER_CARTON_SYNC_INTERVAL")
 	v.BindEnv("scheduler.recommendation_interval", "SCHEDULER_RECOMMENDATION_INTERVAL")
 	v.BindEnv("scheduler.push_interval", "SCHEDULER_PUSH_INTERVAL")
-	
+	v.BindEnv("scheduler.job_timeout", "SCHEDULER_JOB_TIMEOUT")
+	v.BindEnv("scheduler.record_timeout", "SCHEDULER_RECORD_TIMEOUT")
+	v.BindEnv("scheduler.recommendation_batch_size", "SCHEDULER_RECOMMENDATION_BATCH_SIZE")
+	v.BindEnv("scheduler.push_batch_size", "SCHEDULER_PUSH_BATCH_SIZE")
+	v.BindEnv("scheduler.leader_lease_duration", "SCHEDULER_LEADER_LEASE_DURATION")
+
 	v.BindEnv("http.port", "HTTP_PORT")
 	v.BindEnv("log.level", "LOG_LEVEL")
 	v.BindEnv("log.format", "LOG_FORMAT")
@@ -138,8 +153,8 @@ func validateSchedulerConfig(s SchedulerConfig) error {
 	const minInterval = 5 * time.Second
 
 	intervals := map[string]time.Duration{
-		"SCHEDULER_ORDER_SYNC_INTERVAL":      s.OrderSyncInterval,
-		"SCHEDULER_CARTON_SYNC_INTERVAL":     s.CartonSyncInterval,
+		"SCHEDULER_ORDER_SYNC_INTERVAL":     s.OrderSyncInterval,
+		"SCHEDULER_CARTON_SYNC_INTERVAL":    s.CartonSyncInterval,
 		"SCHEDULER_RECOMMENDATION_INTERVAL": s.RecommendationInterval,
 		"SCHEDULER_PUSH_INTERVAL":           s.PushInterval,
 	}
@@ -148,6 +163,26 @@ func validateSchedulerConfig(s SchedulerConfig) error {
 		if d < minInterval {
 			return fmt.Errorf("invalid %s: must be >= %s", key, minInterval)
 		}
+	}
+
+	if s.JobTimeout < 5*time.Second {
+		return fmt.Errorf("invalid SCHEDULER_JOB_TIMEOUT: must be >= 5s")
+	}
+
+	if s.RecordTimeout < 1*time.Second {
+		return fmt.Errorf("invalid SCHEDULER_RECORD_TIMEOUT: must be >= 1s")
+	}
+
+	if s.RecommendationBatchSize <= 0 {
+		return fmt.Errorf("invalid SCHEDULER_RECOMMENDATION_BATCH_SIZE: must be > 0")
+	}
+
+	if s.PushBatchSize <= 0 {
+		return fmt.Errorf("invalid SCHEDULER_PUSH_BATCH_SIZE: must be > 0")
+	}
+
+	if s.LeaderLeaseDuration < minInterval {
+		return fmt.Errorf("invalid SCHEDULER_LEADER_LEASE_DURATION: must be >= %s", minInterval)
 	}
 
 	return nil
@@ -175,10 +210,14 @@ func loadDotEnv(path string) {
 
 		key := strings.TrimSpace(parts[0])
 		value := strings.TrimSpace(parts[1])
-		
+
 		// Only set if not already set in environment
 		if os.Getenv(key) == "" {
 			os.Setenv(key, value)
 		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return
 	}
 }

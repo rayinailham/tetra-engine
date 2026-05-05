@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"math/rand"
 	"strconv"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/anteraja/tetra-engine/internal/client"
 	"github.com/anteraja/tetra-engine/internal/config"
 	"github.com/anteraja/tetra-engine/internal/domain"
+	"github.com/anteraja/tetra-engine/internal/observability"
 	"github.com/anteraja/tetra-engine/internal/repository"
 )
 
@@ -25,8 +27,10 @@ type RecommendationService struct {
 	orderRepo  *repository.OrderRepository
 	cartonRepo *repository.CartonRepository
 	logRepo    *repository.SchedulerLogRepository
+	outboxRepo *repository.OutboxRepository
 	fluxClient *client.FluxClient
 	cfg        *config.Config
+	metrics    *observability.Metrics
 	logger     *slog.Logger
 }
 
@@ -35,16 +39,20 @@ func NewRecommendationService(
 	orderRepo *repository.OrderRepository,
 	cartonRepo *repository.CartonRepository,
 	logRepo *repository.SchedulerLogRepository,
+	outboxRepo *repository.OutboxRepository,
 	fluxClient *client.FluxClient,
 	cfg *config.Config,
+	metrics *observability.Metrics,
 	logger *slog.Logger,
 ) *RecommendationService {
 	return &RecommendationService{
 		orderRepo:  orderRepo,
 		cartonRepo: cartonRepo,
 		logRepo:    logRepo,
+		outboxRepo: outboxRepo,
 		fluxClient: fluxClient,
 		cfg:        cfg,
+		metrics:    metrics,
 		logger:     logger.With(slog.String("component", "recommendation-service")),
 	}
 }
@@ -376,13 +384,13 @@ func (s *RecommendationService) ProcessRecommendations(ctx context.Context) erro
 }
 
 func (s *RecommendationService) doProcessRecommendations(ctx context.Context, processed *int) error {
-	// Get PENDING orders
-	orders, err := s.orderRepo.GetOrdersByStatus(ctx, domain.OrderStatusPending)
+	pendingBefore, err := s.orderRepo.CountByStatus(ctx, domain.OrderStatusPending)
 	if err != nil {
-		return oops.In("service").Wrapf(err, "fetching pending orders")
+		return oops.In("service").Wrapf(err, "counting pending orders")
 	}
+	s.metrics.SetPendingOrders(pendingBefore)
 
-	if len(orders) == 0 {
+	if pendingBefore == 0 {
 		s.logger.Info("no pending orders to process")
 		return nil
 	}
@@ -398,79 +406,104 @@ func (s *RecommendationService) doProcessRecommendations(ctx context.Context, pr
 		return nil
 	}
 
-	s.logger.Info("processing recommendations",
-		slog.Int("pending_orders", len(orders)),
+	s.logger.Info("processing recommendations in batches",
+		slog.Int("pending_orders", pendingBefore),
+		slog.Int("batch_size", s.cfg.Scheduler.RecommendationBatchSize),
 		slog.Int("available_cartons", len(cartons)),
 	)
 
-	// Step 1: Bulk fetch all items for all pending orders (Optimized)
-	orderIDs := make([]int64, len(orders))
-	for i, o := range orders {
-		orderIDs[i] = o.ID
-	}
-
-	allItems, err := s.orderRepo.GetOrderItemsByOrderIDs(ctx, orderIDs)
-	if err != nil {
-		return oops.In("service").Wrapf(err, "bulk fetching order items")
-	}
-
-	// Step 2: Group items by OrderID for O(1) lookup
-	itemsMap := make(map[int64][]domain.OrderItem)
-	for _, item := range allItems {
-		itemsMap[item.OrderID] = append(itemsMap[item.OrderID], item)
-	}
-
-	// Step 3: Process each order using pre-fetched items
-	for _, order := range orders {
-		items := itemsMap[order.ID]
-		if len(items) == 0 {
-			s.logger.Warn("order has no items, skipping", slog.Int64("order_id", order.ID))
-			continue
+	lastID := int64(0)
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 
-		// Calculate total volume and weight (all in int)
-		totalVolume, totalWeight := CalculateOrderDimensions(items)
+		orders, pageErr := s.orderRepo.GetOrdersByStatusAfterID(ctx, domain.OrderStatusPending, lastID, s.cfg.Scheduler.RecommendationBatchSize)
+		if pageErr != nil {
+			return oops.In("service").Wrapf(pageErr, "fetching pending orders page")
+		}
+		if len(orders) == 0 {
+			break
+		}
 
-		// Find the smallest carton that fits
-		carton := FindBestCarton(cartons, totalVolume, totalWeight)
+		orderIDs := make([]int64, len(orders))
+		for i, o := range orders {
+			orderIDs[i] = o.ID
+		}
 
-		if carton == nil {
-			s.logger.Warn("no suitable carton found for order",
-				slog.Int64("order_id", order.ID),
-				slog.String("order_code", order.Code),
-				slog.Int("total_volume_mm3", totalVolume),
-				slog.Int("total_weight_g", totalWeight),
-			)
-			reason := fmt.Sprintf("No carton fits Volume: %d mm³, Weight: %d g", totalVolume, totalWeight)
-			if err := s.orderRepo.UpdateOrderStatus(ctx, order.ID, domain.OrderStatusError, nil, &reason); err != nil {
-				s.logger.Error("failed to mark order as error", slog.Any("error", err))
+		allItems, itemsErr := s.orderRepo.GetOrderItemsByOrderIDs(ctx, orderIDs)
+		if itemsErr != nil {
+			return oops.In("service").Wrapf(itemsErr, "bulk fetching order items")
+		}
+
+		itemsMap := make(map[int64][]domain.OrderItem)
+		for _, item := range allItems {
+			itemsMap[item.OrderID] = append(itemsMap[item.OrderID], item)
+		}
+
+		for _, order := range orders {
+			recordCtx, cancel := context.WithTimeout(ctx, s.cfg.Scheduler.RecordTimeout)
+			err := s.processRecommendationOrder(recordCtx, order, cartons, itemsMap[order.ID], processed)
+			cancel()
+			if err != nil {
+				s.logger.Error("failed processing recommendation order",
+					slog.Int64("order_id", order.ID),
+					slog.String("order_code", order.Code),
+					slog.Any("error", err),
+				)
 			}
-			continue
-		}
 
-		// Update order with recommended carton ID
-		cartonID := carton.ID
-		reason := fmt.Sprintf("Fits in %s (Vol: %d mm³, MaxWt: %d g)", carton.Code, carton.Volume(), carton.MaxWeight)
-		if err := s.orderRepo.UpdateOrderStatus(ctx, order.ID, domain.OrderStatusRecommended, &cartonID, &reason); err != nil {
-			s.logger.Error("failed to update order with recommendation",
-				slog.Int64("order_id", order.ID),
-				slog.Any("error", err),
-			)
-			continue
+			lastID = order.ID
 		}
+	}
 
-		*processed++
-		s.logger.Debug("recommended carton for order",
-			slog.String("order_code", order.Code),
-			slog.String("carton_code", carton.Code),
-			slog.Int("order_volume", totalVolume),
-			slog.Int("carton_volume", carton.Volume()),
-			slog.Int("order_weight", totalWeight),
-			slog.Int("carton_max_weight", carton.MaxWeight),
-		)
+	pendingAfter, countErr := s.orderRepo.CountByStatus(ctx, domain.OrderStatusPending)
+	if countErr == nil {
+		s.metrics.SetPendingOrders(pendingAfter)
 	}
 
 	s.logger.Info("recommendation processing complete", slog.Int("processed", *processed))
+	return nil
+}
+
+func (s *RecommendationService) processRecommendationOrder(ctx context.Context, order domain.Order, cartons []domain.Carton, items []domain.OrderItem, processed *int) error {
+	if len(items) == 0 {
+		s.logger.Warn("order has no items, skipping", slog.Int64("order_id", order.ID))
+		return nil
+	}
+
+	totalVolume, totalWeight := CalculateOrderDimensions(items)
+	carton := FindBestCarton(cartons, totalVolume, totalWeight)
+	if carton == nil {
+		s.logger.Warn("no suitable carton found for order",
+			slog.Int64("order_id", order.ID),
+			slog.String("order_code", order.Code),
+			slog.Int("total_volume_mm3", totalVolume),
+			slog.Int("total_weight_g", totalWeight),
+		)
+		reason := fmt.Sprintf("No carton fits Volume: %d mm³, Weight: %d g", totalVolume, totalWeight)
+		if err := s.orderRepo.UpdateOrderStatus(ctx, order.ID, domain.OrderStatusError, nil, &reason); err != nil {
+			return oops.In("service").With("order_id", order.ID).Wrapf(err, "marking order as no recommendation")
+		}
+		return nil
+	}
+
+	cartonID := carton.ID
+	reason := fmt.Sprintf("Fits in %s (Vol: %d mm³, MaxWt: %d g)", carton.Code, carton.Volume(), carton.MaxWeight)
+	if err := s.orderRepo.UpdateOrderStatus(ctx, order.ID, domain.OrderStatusRecommended, &cartonID, &reason); err != nil {
+		return oops.In("service").With("order_id", order.ID).Wrapf(err, "updating order with recommendation")
+	}
+
+	*processed++
+	s.logger.Debug("recommended carton for order",
+		slog.String("order_code", order.Code),
+		slog.String("carton_code", carton.Code),
+		slog.Int("order_volume", totalVolume),
+		slog.Int("carton_volume", carton.Volume()),
+		slog.Int("order_weight", totalWeight),
+		slog.Int("carton_max_weight", carton.MaxWeight),
+	)
+
 	return nil
 }
 
@@ -501,18 +534,11 @@ func (s *RecommendationService) PushRecommendations(ctx context.Context) error {
 }
 
 func (s *RecommendationService) doPushRecommendations(ctx context.Context, processed *int) error {
-	// Get RECOMMENDED and NO RECOMMENDATION orders
-	orders, err := s.orderRepo.GetOrdersByStatuses(ctx, []string{domain.OrderStatusRecommended, domain.OrderStatusError})
+	enqueued, err := s.enqueuePushIntents(ctx)
 	if err != nil {
-		return oops.In("service").Wrapf(err, "fetching orders for push")
+		return err
 	}
 
-	if len(orders) == 0 {
-		s.logger.Info("no orders to push")
-		return nil
-	}
-
-	// Step 1: Pre-fetch all active cartons to avoid lookups in loop
 	localCartons, err := s.cartonRepo.GetActiveCartons(ctx)
 	if err != nil {
 		return oops.In("service").Wrapf(err, "fetching local cartons for push")
@@ -522,75 +548,186 @@ func (s *RecommendationService) doPushRecommendations(ctx context.Context, proce
 		cartonMap[c.ID] = c
 	}
 
-	s.logger.Info("pushing recommendations to flux", slog.Int("count", len(orders)))
+	s.logger.Info("delivering push outbox in batches",
+		slog.Int("batch_size", s.cfg.Scheduler.PushBatchSize),
+		slog.Int("enqueued", enqueued),
+	)
 
-	for _, order := range orders {
-		var fluxCartonID *string
-
-		// Only look up carton if it was successfully recommended
-		if order.Status == domain.OrderStatusRecommended {
-			if order.CartonID == nil {
-				s.logger.Error("recommended order missing carton_id",
-					slog.Int64("order_id", order.ID),
-					slog.String("order_code", order.Code),
-				)
-				continue
-			}
-
-			// Get the local carton from pre-fetched map
-			localCarton, ok := cartonMap[*order.CartonID]
-			if !ok {
-				s.logger.Error("failed to find local carton in cache", slog.Int64("carton_id", *order.CartonID))
-				continue
-			}
-
-			// Use the numeric FluxID stored in our database
-			idStr := fmt.Sprintf("%d", localCarton.FluxID)
-			fluxCartonID = &idStr
-		} else {
-			// For "NO RECOMMENDATION", we still push but send "0" or empty string
-			// as the carton_id since Flux API marked it as required.
-			// The user wants to push even if null. We send "0" to represent "No Carton".
-			noneStr := "0"
-			fluxCartonID = &noneStr
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 
-		// Push to Flux using the stored Flux numeric ID for the order
-		req := domain.FluxAssignCartonRequest{
-			OrderID:   order.FluxID,
-			CartonID:  fluxCartonID,
-			CreatedBy: s.cfg.CreatedBy,
+		rows, listErr := s.outboxRepo.ListPendingPushes(ctx, s.cfg.Scheduler.PushBatchSize)
+		if listErr != nil {
+			return oops.In("service").Wrapf(listErr, "listing pending push outbox")
 		}
 
-		resp, err := s.fluxClient.AssignCarton(ctx, req)
-		if err != nil {
-			s.logger.Error("failed to push carton assignment",
-				slog.String("order_code", order.Code),
-				slog.Int("flux_order_id", order.FluxID),
-				slog.Any("error", err),
-			)
-			continue
+		if len(rows) == 0 {
+			break
 		}
 
-		// Mark as PUSHED, maintaining the original reason
-		if err := s.orderRepo.UpdateOrderStatus(ctx, order.ID, domain.OrderStatusPushed, order.CartonID, order.Reason); err != nil {
-			s.logger.Error("failed to mark order as pushed",
-				slog.Int64("order_id", order.ID),
-				slog.Any("error", err),
-			)
-			continue
-		}
-
-		*processed++
-		s.logger.Info("pushed carton assignment",
-			slog.String("order_code", order.Code),
-			slog.Int("flux_response_id", resp.ID),
-			slog.String("message", resp.Message),
-		)
+		s.deliverOutboxBatch(ctx, rows, cartonMap, processed)
 	}
 
 	s.logger.Info("push processing complete", slog.Int("processed", *processed))
 	return nil
+}
+
+func (s *RecommendationService) enqueuePushIntents(ctx context.Context) (int, error) {
+	enqueued := 0
+	lastID := int64(0)
+
+	for {
+		orders, err := s.orderRepo.GetOrdersByStatusesAfterID(
+			ctx,
+			[]string{domain.OrderStatusRecommended, domain.OrderStatusError},
+			lastID,
+			s.cfg.Scheduler.PushBatchSize,
+		)
+		if err != nil {
+			return 0, oops.In("service").Wrapf(err, "fetching push candidates page")
+		}
+
+		if len(orders) == 0 {
+			break
+		}
+
+		for _, order := range orders {
+			fluxCartonID, resolveErr := s.resolveFluxCartonIDForPush(ctx, order)
+			if resolveErr != nil {
+				s.logger.Error("failed to resolve flux carton id for push",
+					slog.Int64("order_id", order.ID),
+					slog.String("order_code", order.Code),
+					slog.Any("error", resolveErr),
+				)
+				lastID = order.ID
+				continue
+			}
+
+			recordCtx, cancel := context.WithTimeout(ctx, s.cfg.Scheduler.RecordTimeout)
+			inserted, enqueueErr := s.outboxRepo.EnqueuePushIntent(recordCtx, order, fluxCartonID, s.cfg.CreatedBy)
+			cancel()
+			if enqueueErr != nil {
+				s.logger.Error("failed to enqueue push outbox",
+					slog.Int64("order_id", order.ID),
+					slog.String("order_code", order.Code),
+					slog.Any("error", enqueueErr),
+				)
+			} else if inserted {
+				enqueued++
+			}
+
+			lastID = order.ID
+		}
+	}
+
+	return enqueued, nil
+}
+
+func (s *RecommendationService) resolveFluxCartonIDForPush(ctx context.Context, order domain.Order) (*string, error) {
+	if order.Status == domain.OrderStatusError {
+		none := "0"
+		return &none, nil
+	}
+
+	if order.CartonID == nil {
+		return nil, fmt.Errorf("recommended order missing carton_id")
+	}
+
+	localCarton, err := s.cartonRepo.GetCartonByID(ctx, *order.CartonID)
+	if err != nil {
+		return nil, oops.In("service").With("carton_id", *order.CartonID).Wrapf(err, "querying carton by id")
+	}
+	if localCarton == nil {
+		return nil, fmt.Errorf("local carton %d not found", *order.CartonID)
+	}
+
+	idStr := fmt.Sprintf("%d", localCarton.FluxID)
+	return &idStr, nil
+}
+
+func (s *RecommendationService) deliverOutboxBatch(ctx context.Context, rows []domain.PushOutbox, cartonMap map[int64]domain.Carton, processed *int) {
+	for _, row := range rows {
+		recordCtx, cancel := context.WithTimeout(ctx, s.cfg.Scheduler.RecordTimeout)
+		err := s.deliverOutboxRecord(recordCtx, row, cartonMap)
+		cancel()
+
+		if err != nil {
+			backoff := nextRetryBackoff(row.AttemptCount)
+			s.metrics.IncPushRetry()
+			if retryErr := s.outboxRepo.MarkRetry(ctx, row.ID, err.Error(), backoff); retryErr != nil {
+				s.logger.Error("failed to mark outbox retry",
+					slog.Int64("outbox_id", row.ID),
+					slog.Any("error", retryErr),
+				)
+			}
+			continue
+		}
+
+		*processed++
+	}
+}
+
+func (s *RecommendationService) deliverOutboxRecord(ctx context.Context, row domain.PushOutbox, cartonMap map[int64]domain.Carton) error {
+	if row.FluxCartonID == nil {
+		return fmt.Errorf("outbox row %d missing flux_carton_id", row.ID)
+	}
+
+	req := domain.FluxAssignCartonRequest{
+		OrderID:   row.FluxOrderID,
+		CartonID:  row.FluxCartonID,
+		CreatedBy: row.CreatedBy,
+	}
+
+	resp, err := s.fluxClient.AssignCarton(ctx, req)
+	if err != nil {
+		return oops.In("service").With("outbox_id", row.ID).Wrapf(err, "pushing carton assignment")
+	}
+
+	var cartonID *int64
+	if *row.FluxCartonID != "0" {
+		for id, carton := range cartonMap {
+			if fmt.Sprintf("%d", carton.FluxID) == *row.FluxCartonID {
+				idCopy := id
+				cartonID = &idCopy
+				break
+			}
+		}
+	}
+
+	if err := s.outboxRepo.MarkDelivered(ctx, row.ID, row.OrderID, cartonID); err != nil {
+		return oops.In("service").With("outbox_id", row.ID).Wrapf(err, "marking outbox delivery success")
+	}
+
+	s.logger.Info("pushed carton assignment",
+		slog.Int64("outbox_id", row.ID),
+		slog.Int64("order_id", row.OrderID),
+		slog.Int("flux_response_id", resp.ID),
+		slog.String("message", resp.Message),
+	)
+
+	return nil
+}
+
+func nextRetryBackoff(attempt int) time.Duration {
+	base := 5 * time.Second
+	if attempt <= 0 {
+		return base
+	}
+
+	exp := attempt
+	if exp > 6 {
+		exp = 6
+	}
+
+	backoff := base * time.Duration(1<<exp)
+	if backoff > 5*time.Minute {
+		backoff = 5 * time.Minute
+	}
+
+	jitter := time.Duration(rand.Int63n(int64(2 * time.Second)))
+	return backoff + jitter
 }
 
 // CalculateOrderDimensions calculates total volume (mm³) and weight (g) for all items.

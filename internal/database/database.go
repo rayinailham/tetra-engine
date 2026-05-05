@@ -68,6 +68,11 @@ func Migrate(db *sqlx.DB, logger *slog.Logger) error {
 	// This ensures everyone has the optimized INT schema regardless of when they first ran the app.
 	reconcileQuery := `
 		DO $$ BEGIN
+			-- Ensure push_outbox_status enum exists
+			IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'push_outbox_status') THEN
+				CREATE TYPE push_outbox_status AS ENUM ('PENDING', 'RETRY', 'DELIVERED');
+			END IF;
+
 			-- Fix cartons
 			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'cartons' AND column_name = 'length' AND data_type = 'numeric') THEN
 				ALTER TABLE cartons ALTER COLUMN length TYPE INT USING length::INT,
@@ -98,6 +103,32 @@ func Migrate(db *sqlx.DB, logger *slog.Logger) error {
 			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'cartons' AND column_name = 'flux_id') THEN
 				ALTER TABLE cartons ADD COLUMN flux_id INT NOT NULL DEFAULT 0;
 			END IF;
+
+			-- Ensure push_outbox table exists
+			CREATE TABLE IF NOT EXISTS push_outbox (
+				id              BIGSERIAL           PRIMARY KEY,
+				order_id        BIGINT              NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+				flux_order_id   INT                 NOT NULL,
+				flux_carton_id  VARCHAR(50),
+				created_by      VARCHAR(255)        NOT NULL,
+				status          push_outbox_status  NOT NULL DEFAULT 'PENDING',
+				attempt_count   INT                 NOT NULL DEFAULT 0,
+				last_error      TEXT,
+				next_attempt_at TIMESTAMPTZ         NOT NULL DEFAULT NOW(),
+				delivered_at    TIMESTAMPTZ,
+				created_at      TIMESTAMPTZ         NOT NULL DEFAULT NOW(),
+				updated_at      TIMESTAMPTZ         NOT NULL DEFAULT NOW()
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_push_outbox_status_next_attempt_at ON push_outbox (status, next_attempt_at);
+
+			-- Ensure scheduler leader lease table exists
+			CREATE TABLE IF NOT EXISTS scheduler_leader (
+				id          SMALLINT     PRIMARY KEY CHECK (id = 1),
+				leader_id   VARCHAR(255) NOT NULL,
+				lease_until TIMESTAMPTZ  NOT NULL,
+				updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+			);
 		END $$;`
 
 	_, err = db.Exec(reconcileQuery)

@@ -23,6 +23,13 @@ const (
 	SchedulerStatusFailed  = "FAILED"
 )
 
+// Push outbox status constants.
+const (
+	PushOutboxStatusPending   = "PENDING"
+	PushOutboxStatusRetry     = "RETRY"
+	PushOutboxStatusDelivered = "DELIVERED"
+)
+
 // Order represents an order record in the Tetra database.
 type Order struct {
 	ID            int64      `db:"id"`
@@ -88,6 +95,22 @@ type SchedulerLog struct {
 	ErrorMessage     *string    `db:"error_message"`
 	StartedAt        time.Time  `db:"started_at"`
 	FinishedAt       *time.Time `db:"finished_at"`
+}
+
+// PushOutbox stores push intents and delivery state for exactly-once safety.
+type PushOutbox struct {
+	ID            int64      `db:"id"`
+	OrderID       int64      `db:"order_id"`
+	FluxOrderID   int        `db:"flux_order_id"`
+	FluxCartonID  *string    `db:"flux_carton_id"`
+	CreatedBy     string     `db:"created_by"`
+	Status        string     `db:"status"`
+	AttemptCount  int        `db:"attempt_count"`
+	LastError     *string    `db:"last_error"`
+	NextAttemptAt time.Time  `db:"next_attempt_at"`
+	DeliveredAt   *time.Time `db:"delivered_at"`
+	CreatedAt     time.Time  `db:"created_at"`
+	UpdatedAt     time.Time  `db:"updated_at"`
 }
 
 // FluxOrder represents an order as returned by the Flux WMS API (GET /orders).

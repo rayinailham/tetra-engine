@@ -17,6 +17,7 @@ import (
 	"github.com/anteraja/tetra-engine/internal/client"
 	"github.com/anteraja/tetra-engine/internal/config"
 	"github.com/anteraja/tetra-engine/internal/database"
+	"github.com/anteraja/tetra-engine/internal/observability"
 	"github.com/anteraja/tetra-engine/internal/repository"
 	"github.com/anteraja/tetra-engine/internal/scheduler"
 	"github.com/anteraja/tetra-engine/internal/server"
@@ -36,11 +37,14 @@ func main() {
 
 		// Database
 		fx.Provide(provideDatabase),
+		fx.Provide(observability.NewMetrics),
 
 		// Repositories
 		fx.Provide(repository.NewOrderRepository),
 		fx.Provide(repository.NewCartonRepository),
 		fx.Provide(repository.NewSchedulerLogRepository),
+		fx.Provide(repository.NewOutboxRepository),
+		fx.Provide(repository.NewSchedulerLockRepository),
 
 		// External client
 		fx.Provide(client.NewFluxClient),

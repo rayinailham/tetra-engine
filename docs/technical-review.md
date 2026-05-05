@@ -81,6 +81,5 @@ The original architecture prioritized correctness and clarity; these targeted im
 - `internal/observability/metrics.go` — Prometheus metrics
 - `migrations/000001_create_tables.*.sql` — new schema objects
 
-If you want, I can also add a short changelog entry to `README.md` and prepare a small deployment checklist for the ops team (DB migration, config knobs, CI with `-race`).
 
-**Status:** `docs/technical-review.md` updated and ready to share with the architecture author.
+**Status:** `docs/technical-review.md` updated and ready to share.

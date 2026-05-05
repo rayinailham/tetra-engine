@@ -395,17 +395,17 @@ func (s *Server) handleEngineStop(w http.ResponseWriter, r *http.Request) {
 // handleEngineReset truncates all data in the database.
 func (s *Server) handleEngineReset(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	
+
 	// Stop the engine before resetting to prevent race conditions
 	s.scheduler.Stop()
-	
-	_, err := s.db.ExecContext(ctx, "TRUNCATE TABLE orders, order_items, products, cartons, scheduler_logs RESTART IDENTITY CASCADE;")
+
+	_, err := s.db.ExecContext(ctx, "TRUNCATE TABLE orders, order_items, products, cartons, scheduler_logs, push_outbox, scheduler_leader RESTART IDENTITY CASCADE;")
 	if err != nil {
 		s.logger.Error("failed to reset database", slog.Any("error", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to reset database"})
 		return
 	}
-	
+
 	s.logger.Info("database reset successfully")
 	writeJSON(w, http.StatusOK, map[string]string{"message": "Database reset successfully. Engine stopped."})
 }
@@ -413,12 +413,12 @@ func (s *Server) handleEngineReset(w http.ResponseWriter, r *http.Request) {
 // handleDashboardSettingsGet returns the current scheduler intervals.
 func (s *Server) handleDashboardSettingsGet(w http.ResponseWriter, r *http.Request) {
 	order, carton, rec, push := s.scheduler.GetIntervals()
-	
+
 	writeJSON(w, http.StatusOK, map[string]string{
-		"order_sync_interval":    order.String(),
-		"carton_sync_interval":   carton.String(),
+		"order_sync_interval":     order.String(),
+		"carton_sync_interval":    carton.String(),
 		"recommendation_interval": rec.String(),
-		"push_interval":          push.String(),
+		"push_interval":           push.String(),
 	})
 }
 
@@ -430,22 +430,22 @@ func (s *Server) handleDashboardSettingsUpdate(w http.ResponseWriter, r *http.Re
 		RecommendationInterval string `json:"recommendation_interval"`
 		PushInterval           string `json:"push_interval"`
 	}
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json payload"})
 		return
 	}
-	
+
 	order, err1 := time.ParseDuration(req.OrderSyncInterval)
 	carton, err2 := time.ParseDuration(req.CartonSyncInterval)
 	rec, err3 := time.ParseDuration(req.RecommendationInterval)
 	push, err4 := time.ParseDuration(req.PushInterval)
-	
+
 	if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid duration format (e.g. use '15m', '30s')"})
 		return
 	}
-	
+
 	if err := s.scheduler.UpdateIntervals(order, carton, rec, push); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -457,6 +457,6 @@ func (s *Server) handleDashboardSettingsUpdate(w http.ResponseWriter, r *http.Re
 		slog.String("recommendation", rec.String()),
 		slog.String("push", push.String()),
 	)
-	
+
 	writeJSON(w, http.StatusOK, map[string]string{"message": "Settings updated successfully"})
 }
