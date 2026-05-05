@@ -5,6 +5,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -25,6 +26,8 @@ type Scheduler struct {
 	mu     sync.Mutex
 	isRunning bool
 }
+
+const minSchedulerInterval = 5 * time.Second
 
 // NewScheduler creates a new Scheduler and registers lifecycle hooks.
 func NewScheduler(
@@ -204,14 +207,18 @@ func (s *Scheduler) TriggerJob(ctx context.Context, jobName string) error {
 		err = s.svc.PushRecommendations(ctx)
 	default:
 		s.logger.Warn("unknown job name", slog.String("job", jobName))
-		return nil
+		return fmt.Errorf("unknown job name: %s", jobName)
 	}
 
 	return err
 }
 
 // UpdateIntervals gracefully stops the scheduler, updates the intervals, and restarts it if it was running.
-func (s *Scheduler) UpdateIntervals(order, carton, rec, push time.Duration) {
+func (s *Scheduler) UpdateIntervals(order, carton, rec, push time.Duration) error {
+	if err := validateIntervals(order, carton, rec, push); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	wasRunning := s.isRunning
 	s.mu.Unlock()
@@ -228,6 +235,8 @@ func (s *Scheduler) UpdateIntervals(order, carton, rec, push time.Duration) {
 	if wasRunning {
 		s.Start()
 	}
+
+	return nil
 }
 
 // GetIntervals returns the current intervals.
@@ -236,4 +245,21 @@ func (s *Scheduler) GetIntervals() (time.Duration, time.Duration, time.Duration,
 		s.cfg.Scheduler.CartonSyncInterval,
 		s.cfg.Scheduler.RecommendationInterval,
 		s.cfg.Scheduler.PushInterval
+}
+
+func validateIntervals(order, carton, rec, push time.Duration) error {
+	intervals := map[string]time.Duration{
+		"order_sync_interval":      order,
+		"carton_sync_interval":     carton,
+		"recommendation_interval": rec,
+		"push_interval":           push,
+	}
+
+	for name, d := range intervals {
+		if d < minSchedulerInterval {
+			return fmt.Errorf("%s must be >= %s", name, minSchedulerInterval)
+		}
+	}
+
+	return nil
 }

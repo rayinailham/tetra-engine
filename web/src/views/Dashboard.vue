@@ -1,10 +1,11 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
 const stats = ref(null)
 const error = ref(null)
 const loading = ref(true)
 const engineRunning = ref(false)
+let pollIntervalId = null
 
 const fetchStats = async () => {
   try {
@@ -52,8 +53,14 @@ const formatTime = (ts) => {
 
 onMounted(() => {
   fetchStats()
-  const interval = setInterval(fetchStats, 5000)
-  return () => clearInterval(interval)
+  pollIntervalId = setInterval(fetchStats, 5000)
+})
+
+onUnmounted(() => {
+  if (pollIntervalId !== null) {
+    clearInterval(pollIntervalId)
+    pollIntervalId = null
+  }
 })
 </script>
 

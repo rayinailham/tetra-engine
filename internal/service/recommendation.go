@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -101,8 +102,19 @@ func (s *RecommendationService) doSyncOrders(ctx context.Context, processed *int
 				return nil // continue other orders
 			}
 
-			// Parse timestamps
-			fluxCreatedAt, _ := time.Parse(time.RFC3339, orderInfo.CreatedAt)
+			var fluxCreatedAt *time.Time
+			if orderInfo.CreatedAt != "" {
+				parsed, parseErr := time.Parse(time.RFC3339, orderInfo.CreatedAt)
+				if parseErr != nil {
+					s.logger.Warn("invalid flux created_at, using nil",
+						slog.String("order_code", orderInfo.Code),
+						slog.String("created_at", orderInfo.CreatedAt),
+						slog.Any("error", parseErr),
+					)
+				} else {
+					fluxCreatedAt = &parsed
+				}
+			}
 
 			now := time.Now()
 			order := &domain.Order{
@@ -110,7 +122,7 @@ func (s *RecommendationService) doSyncOrders(ctx context.Context, processed *int
 				Code:          orderInfo.Code,
 				WarehouseID:   orderInfo.WarehouseID,
 				Status:        domain.OrderStatusSynced,
-				FluxCreatedAt: &fluxCreatedAt,
+				FluxCreatedAt: fluxCreatedAt,
 				SyncedAt:      &now,
 			}
 
@@ -127,26 +139,77 @@ func (s *RecommendationService) doSyncOrders(ctx context.Context, processed *int
 			// Convert and insert items/products
 			items := make([]domain.OrderItem, 0, len(detail.Details))
 			products := make([]domain.Product, 0, len(detail.Details))
+			seenProducts := make(map[string]struct{}, len(detail.Details))
 			for _, di := range detail.Details {
-				length, _ := strconv.ParseFloat(di.Length, 64)
-				width, _ := strconv.ParseFloat(di.Width, 64)
-				height, _ := strconv.ParseFloat(di.Height, 64)
-				weight, _ := strconv.ParseFloat(di.Weight, 64)
+				length, parseErr := parseDecimalToScaledInt(di.Length, 10)
+				if parseErr != nil {
+					s.logger.Warn("invalid item length, skipping item",
+						slog.String("order_code", orderInfo.Code),
+						slog.String("sku", di.SKU),
+						slog.String("length", di.Length),
+						slog.Any("error", parseErr),
+					)
+					continue
+				}
+
+				width, parseErr := parseDecimalToScaledInt(di.Width, 10)
+				if parseErr != nil {
+					s.logger.Warn("invalid item width, skipping item",
+						slog.String("order_code", orderInfo.Code),
+						slog.String("sku", di.SKU),
+						slog.String("width", di.Width),
+						slog.Any("error", parseErr),
+					)
+					continue
+				}
+
+				height, parseErr := parseDecimalToScaledInt(di.Height, 10)
+				if parseErr != nil {
+					s.logger.Warn("invalid item height, skipping item",
+						slog.String("order_code", orderInfo.Code),
+						slog.String("sku", di.SKU),
+						slog.String("height", di.Height),
+						slog.Any("error", parseErr),
+					)
+					continue
+				}
+
+				weight, parseErr := parseDecimalToScaledInt(di.Weight, 1000)
+				if parseErr != nil {
+					s.logger.Warn("invalid item weight, skipping item",
+						slog.String("order_code", orderInfo.Code),
+						slog.String("sku", di.SKU),
+						slog.String("weight", di.Weight),
+						slog.Any("error", parseErr),
+					)
+					continue
+				}
 
 				productName := di.SKUName
-				products = append(products, domain.Product{
-					SKU:  di.SKU,
-					Name: &productName,
-				})
+				if _, seen := seenProducts[di.SKU]; !seen {
+					products = append(products, domain.Product{
+						SKU:  di.SKU,
+						Name: &productName,
+					})
+					seenProducts[di.SKU] = struct{}{}
+				}
 
 				items = append(items, domain.OrderItem{
 					SKU:    di.SKU,
 					Qty:    di.Qty,
-					Length: int(length * 10),    // cm to mm
-					Width:  int(width * 10),
-					Height: int(height * 10),
-					Weight: int(weight * 1000), // kg to grams
+					Length: length, // cm to mm
+					Width:  width,
+					Height: height,
+					Weight: weight, // kg to grams
 				})
+			}
+
+			if len(items) == 0 {
+				s.logger.Warn("order has no valid items after parsing, skipping items insert",
+					slog.String("order_code", orderInfo.Code),
+					slog.Int("flux_order_id", orderInfo.ID),
+				)
+				return nil
 			}
 
 			if err := s.orderRepo.InsertOrderItems(gCtx, localOrderID, items, products); err != nil {
@@ -221,18 +284,53 @@ func (s *RecommendationService) doSyncCartons(ctx context.Context, processed *in
 	s.logger.Info("fetched cartons from flux", slog.Int("count", len(fluxCartons)))
 
 	for _, fc := range fluxCartons {
-		length, _ := strconv.ParseFloat(fc.Length, 64)
-		width, _ := strconv.ParseFloat(fc.Width, 64)
-		height, _ := strconv.ParseFloat(fc.Height, 64)
-		maxWeight, _ := strconv.ParseFloat(fc.MaxWeight, 64)
+		length, parseErr := parseDecimalToScaledInt(fc.Length, 10)
+		if parseErr != nil {
+			s.logger.Warn("invalid carton length, skipping carton",
+				slog.String("carton_code", fc.Code),
+				slog.String("length", fc.Length),
+				slog.Any("error", parseErr),
+			)
+			continue
+		}
+
+		width, parseErr := parseDecimalToScaledInt(fc.Width, 10)
+		if parseErr != nil {
+			s.logger.Warn("invalid carton width, skipping carton",
+				slog.String("carton_code", fc.Code),
+				slog.String("width", fc.Width),
+				slog.Any("error", parseErr),
+			)
+			continue
+		}
+
+		height, parseErr := parseDecimalToScaledInt(fc.Height, 10)
+		if parseErr != nil {
+			s.logger.Warn("invalid carton height, skipping carton",
+				slog.String("carton_code", fc.Code),
+				slog.String("height", fc.Height),
+				slog.Any("error", parseErr),
+			)
+			continue
+		}
+
+		maxWeight, parseErr := parseDecimalToScaledInt(fc.MaxWeight, 1000)
+		if parseErr != nil {
+			s.logger.Warn("invalid carton max_weight, skipping carton",
+				slog.String("carton_code", fc.Code),
+				slog.String("max_weight", fc.MaxWeight),
+				slog.Any("error", parseErr),
+			)
+			continue
+		}
 
 		carton := &domain.Carton{
 			FluxID:    fc.ID,
 			Code:      fc.Code,
-			Length:    int(length * 10),     // cm to mm
-			Width:     int(width * 10),
-			Height:    int(height * 10),
-			MaxWeight: int(maxWeight * 1000), // kg to grams
+			Length:    length, // cm to mm
+			Width:     width,
+			Height:    height,
+			MaxWeight: maxWeight, // kg to grams
 			IsActive:  true,
 		}
 
@@ -519,4 +617,13 @@ func FindBestCarton(cartons []domain.Carton, totalVolume int, totalWeight int) *
 		}
 	}
 	return nil
+}
+
+func parseDecimalToScaledInt(raw string, scale int) (int, error) {
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return int(math.Round(v * float64(scale))), nil
 }

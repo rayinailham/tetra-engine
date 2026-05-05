@@ -1,10 +1,11 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
 const logs = ref([])
 const loading = ref(true)
 const sortBy = ref('started_at')
 const order = ref('desc')
+let pollIntervalId = null
 
 const fetchLogs = async () => {
   try {
@@ -31,9 +32,14 @@ onMounted(() => {
   fetchLogs()
 
   // Standard polling for robust updates
-  const interval = setInterval(fetchLogs, 5000)
+  pollIntervalId = setInterval(fetchLogs, 5000)
+})
 
-  return () => clearInterval(interval)
+onUnmounted(() => {
+  if (pollIntervalId !== null) {
+    clearInterval(pollIntervalId)
+    pollIntervalId = null
+  }
 })
 
 const getBadgeClass = (status) => {

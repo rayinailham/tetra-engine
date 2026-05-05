@@ -446,7 +446,11 @@ func (s *Server) handleDashboardSettingsUpdate(w http.ResponseWriter, r *http.Re
 		return
 	}
 	
-	s.scheduler.UpdateIntervals(order, carton, rec, push)
+	if err := s.scheduler.UpdateIntervals(order, carton, rec, push); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
 	s.logger.Info("scheduler intervals updated",
 		slog.String("order_sync", order.String()),
 		slog.String("carton_sync", carton.String()),

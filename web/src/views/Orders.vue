@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 
 const orders = ref([])
 const loading = ref(true)
@@ -7,6 +7,7 @@ const selectedOrder = ref(null)
 const selectedOrderItems = ref([])
 const detailsLoading = ref(false)
 const detailsError = ref(null)
+let pollIntervalId = null
 
 // Filters
 const filterStatus = ref('ALL')
@@ -45,8 +46,14 @@ const fetchOrders = async () => {
 
 onMounted(() => {
   fetchOrders()
-  const interval = setInterval(fetchOrders, 5000)
-  return () => clearInterval(interval)
+  pollIntervalId = setInterval(fetchOrders, 5000)
+})
+
+onUnmounted(() => {
+  if (pollIntervalId !== null) {
+    clearInterval(pollIntervalId)
+    pollIntervalId = null
+  }
 })
 
 const viewDetails = async (id) => {

@@ -137,3 +137,40 @@ The Tetra Engine features a highly optimized data processing layer:
 5. **Resilient Sync:** Every API and DB operation is wrapped in context-aware timeouts and atomic transactions.
 
 For full technical details, see [`docs/technical-review.md`](docs/technical-review.md).
+
+## High-Impact Next Improvements
+
+If you want improvements that significantly change engine behavior (without auth/CORS), prioritize these:
+
+1. **Batch/Paginated Recommendation Processing**
+  - Problem: recommendation flow loads all `PENDING` orders and their items in one pass.
+  - Impact: at high backlog, memory and DB pressure increase sharply.
+  - Recommendation: process in fixed-size batches (for example 500-1000 orders per cycle), with stable cursor/offset ordering.
+
+2. **Job-Level Timeout and Partial-Failure Isolation**
+  - Problem: one slow external call can consume an entire scheduler cycle.
+  - Impact: delayed next runs and uneven throughput.
+  - Recommendation: enforce per-job timeout contexts, and isolate failed records so the rest of the batch can continue.
+
+3. **Exactly-Once Push Safety via Outbox Pattern**
+  - Problem: push-to-Flux success/failure can race with status updates when networks are unstable.
+  - Impact: risk of duplicate or missed external assignment on retries.
+  - Recommendation: write push intent to local outbox table in the same DB transaction, then asynchronously deliver and mark confirmed.
+
+4. **Scheduler Metrics and SLO-Based Alerting**
+  - Problem: logs are available, but no quantitative health target.
+  - Impact: degradation is discovered late.
+  - Recommendation: expose metrics (`job_duration_seconds`, `job_failures_total`, `pending_orders`, `push_retry_total`) and define alert thresholds.
+
+5. **Distributed Scheduler Locking (for Horizontal Scale)**
+  - Problem: if multiple instances run, the same jobs can execute concurrently.
+  - Impact: duplicated processing and non-deterministic behavior.
+  - Recommendation: use database advisory lock or leader-election gate so only one active scheduler executes periodic jobs.
+
+### Suggested Execution Order
+
+1. Batch/paginated recommendation processing.
+2. Job-level timeout and partial-failure isolation.
+3. Scheduler metrics and alerts.
+4. Outbox pattern for push reliability.
+5. Distributed scheduler lock for multi-instance deployment.

@@ -127,7 +127,30 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshaling config: %w", err)
 	}
 
+	if err := validateSchedulerConfig(cfg.Scheduler); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+func validateSchedulerConfig(s SchedulerConfig) error {
+	const minInterval = 5 * time.Second
+
+	intervals := map[string]time.Duration{
+		"SCHEDULER_ORDER_SYNC_INTERVAL":      s.OrderSyncInterval,
+		"SCHEDULER_CARTON_SYNC_INTERVAL":     s.CartonSyncInterval,
+		"SCHEDULER_RECOMMENDATION_INTERVAL": s.RecommendationInterval,
+		"SCHEDULER_PUSH_INTERVAL":           s.PushInterval,
+	}
+
+	for key, d := range intervals {
+		if d < minInterval {
+			return fmt.Errorf("invalid %s: must be >= %s", key, minInterval)
+		}
+	}
+
+	return nil
 }
 
 // loadDotEnv manually parses a KEY=VALUE file and sets environment variables.
